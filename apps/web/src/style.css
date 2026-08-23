@@ -86,8 +86,22 @@ header {
   margin-bottom: 2rem;
 }
 
-.logout-button {
+.account {
+  display: flex;
   margin-left: auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+}
+
+.account-email {
+  color: var(--cp-text-muted);
+  font-size: 0.75rem;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.logout-button {
   border: 1px solid var(--cp-border);
   border-radius: 0.625rem;
   padding: 0.5rem 0.75rem;
@@ -247,6 +261,46 @@ a {
 
 .messages {
   margin-top: 2.25rem;
+}
+
+.metrics-card {
+  margin-top: 2.25rem;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.7rem;
+  margin: 0;
+}
+
+.metrics > div {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--cp-border);
+  border-radius: 0.625rem;
+  background: var(--cp-surface);
+  text-align: center;
+}
+
+.metrics dt {
+  color: var(--cp-text-muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.metrics dd {
+  margin: 0.3rem 0 0;
+  color: var(--cp-text);
+  font-size: 1.5rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 32rem) {
+  .metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
 .section-heading {

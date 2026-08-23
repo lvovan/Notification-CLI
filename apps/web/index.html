@@ -44,14 +44,17 @@
         <img class="mark" src="/icon.svg" alt="" aria-hidden="true" />
         <div>
           <h1>Notification CLI</h1>
-          <p class="subtitle">Real-time messages from your tools</p>
+          <p class="subtitle">Your live tool updates</p>
         </div>
-        <a
-          class="logout-button"
-          href="/.auth/logout?post_logout_redirect_uri=/"
-        >
-          Logout
-        </a>
+        <div class="account">
+          <span class="account-email" id="account-email"></span>
+          <a
+            class="logout-button"
+            href="/.auth/logout?post_logout_redirect_uri=/"
+          >
+            Logout
+          </a>
+        </div>
       </header>
 
       <section class="status-card" aria-live="polite">
@@ -66,7 +69,7 @@
         <div>
           <h2 id="push-title">Background notifications</h2>
           <p>
-            Receive notifications even when Notification CLI is not open.
+            Receive notifications anytime, anywhere.
           </p>
         </div>
         <div class="push-actions">
@@ -83,6 +86,36 @@
           role="status"
           aria-live="polite"
           aria-atomic="true"
+        ></p>
+      </section>
+
+      <section class="metrics-card" aria-labelledby="metrics-title">
+        <div class="section-heading">
+          <h2 id="metrics-title">Notifications sent</h2>
+        </div>
+        <dl class="metrics" id="metrics">
+          <div>
+            <dt>Last 24 hours</dt>
+            <dd id="metric-last24Hours">-</dd>
+          </div>
+          <div>
+            <dt>Last 7 days</dt>
+            <dd id="metric-last7Days">-</dd>
+          </div>
+          <div>
+            <dt>Last 30 days</dt>
+            <dd id="metric-last30Days">-</dd>
+          </div>
+          <div>
+            <dt>Total</dt>
+            <dd id="metric-total">-</dd>
+          </div>
+        </dl>
+        <p
+          id="metrics-status"
+          class="push-status"
+          role="status"
+          aria-live="polite"
         ></p>
       </section>
 
@@ -114,6 +147,8 @@
         });
         const session = await response.json();
         if (response.ok && session.authorized) {
+          document.querySelector("#account-email").textContent =
+            session.email ?? "";
           gate.hidden = true;
           app.hidden = false;
           await import("/src/main.ts");

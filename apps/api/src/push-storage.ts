@@ -1,9 +1,8 @@
 import { createHash } from "node:crypto";
 import { TableClient, type TableEntity } from "@azure/data-tables";
 import { hasSetting, requireSetting } from "./configuration.js";
+import { STORAGE_CONNECTION_STRING_ENV } from "./metrics-storage.js";
 
-export const PUSH_STORAGE_CONNECTION_STRING_ENV =
-  "NOTIFICATION_CLI_PUSH_STORAGE_CONNECTION_STRING";
 export const PUSH_SUBSCRIPTIONS_TABLE = "PushSubscriptions";
 
 export interface StoredPushSubscription {
@@ -187,7 +186,7 @@ export function createPushSubscriptionStore(
 ): PushSubscriptionStore {
   return new AzureTablePushSubscriptionStore(
     TableClient.fromConnectionString(
-      requireSetting(env, PUSH_STORAGE_CONNECTION_STRING_ENV),
+      requireSetting(env, STORAGE_CONNECTION_STRING_ENV),
       PUSH_SUBSCRIPTIONS_TABLE,
     ),
   );
@@ -197,7 +196,7 @@ export function createPushSubscriptionStore(
 export function tryCreatePushSubscriptionStore(
   env: NodeJS.ProcessEnv = process.env,
 ): PushSubscriptionStore | null {
-  return hasSetting(env, PUSH_STORAGE_CONNECTION_STRING_ENV)
+  return hasSetting(env, STORAGE_CONNECTION_STRING_ENV)
     ? createPushSubscriptionStore(env)
     : null;
 }

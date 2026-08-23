@@ -4,6 +4,7 @@ import {
   handleSessionRequest,
 } from "./browser.js";
 import { handleMcpRequest } from "./mcp.js";
+import { handleMetricsRequest } from "./metrics.js";
 import { handleNotifyRequest } from "./notify.js";
 import {
   handleDeletePushSubscription,
@@ -51,6 +52,13 @@ app.http("push-subscriptions-delete", {
   authLevel: "anonymous",
   route: "push/subscriptions",
   handler: (request) => handleDeletePushSubscription(request),
+});
+
+app.http("metrics", {
+  methods: ["GET"],
+  authLevel: "anonymous",
+  route: "metrics",
+  handler: (request) => handleMetricsRequest(request),
 });
 
 app.http("notify", {

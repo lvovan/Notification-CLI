@@ -3,6 +3,10 @@ import webPush, { type PushSubscription } from "web-push";
 import { AUTHORIZED_USERS_ENV, parseAuthorizedUsers } from "./auth.js";
 import { hasSetting, requireSetting } from "./configuration.js";
 import {
+  tryCreateNotificationMetricsStore,
+  type NotificationMetricsStore,
+} from "./metrics-storage.js";
+import {
   tryCreatePushSubscriptionStore,
   type PushSubscriptionStore,
   type StoredPushSubscription,
@@ -35,6 +39,8 @@ export interface FanoutReport {
   pushDelivered: number;
   pushRemoved: number;
   pushFailed: number;
+  metricRecorded?: boolean;
+  metricError?: string;
   errors: string[];
 }
 
@@ -143,8 +149,10 @@ export async function fanOutNotification(
     webPubSub?: WebPubSubSender;
     store?: PushSubscriptionStore;
     webPush?: WebPushSender;
+    metrics?: NotificationMetricsStore;
     env?: NodeJS.ProcessEnv;
     notificationId?: () => string;
+    now?: () => Date;
   },
 ): Promise<FanoutReport> {
   const report: FanoutReport = {
@@ -194,6 +202,18 @@ export async function fanOutNotification(
 
   if (results[0].status === "fulfilled") {
     report.webPubSubDelivered = true;
+    const metrics =
+      dependencies?.metrics ?? tryCreateNotificationMetricsStore(env);
+    if (metrics) {
+      try {
+        await metrics.record((dependencies?.now ?? (() => new Date()))());
+        report.metricRecorded = true;
+      } catch (error) {
+        // Metrics are telemetry: a storage failure must never turn a delivered
+        // notification into a reported delivery failure.
+        report.metricError = errorMessage(error);
+      }
+    }
   } else {
     report.errors.push(
       `Web PubSub delivery failed: ${errorMessage(results[0].reason)}`,

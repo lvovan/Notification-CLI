@@ -90,6 +90,15 @@ test("fails closed when AUTHORIZED_USERS or the principal is absent", () => {
   assert.equal(noPrincipal.status, 401);
 });
 
+test("treats a principal without an email as an expired session, not a denial", () => {
+  const authorization = authorizeBrowserRequest(requestFor("  "), {
+    AUTHORIZED_USERS: "user@example.com",
+  });
+  assert.equal(authorization.authorized, false);
+  assert.equal(authorization.status, 401);
+  assert.match(authorization.error ?? "", /did not include an email address/);
+});
+
 test("uses an email claim when supplied by the SWA principal", () => {
   const authorization = authorizeBrowserRequest(
     requestFor("display name", {

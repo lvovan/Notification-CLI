@@ -8,6 +8,15 @@ interface PushConfigResponse {
   publicKey: string;
 }
 
+const METRIC_WINDOWS = [
+  "last24Hours",
+  "last7Days",
+  "last30Days",
+  "total",
+] as const;
+
+type NotificationCounts = Record<(typeof METRIC_WINDOWS)[number], number>;
+
 interface IncomingNotification {
   id?: string;
   message: string;
@@ -30,6 +39,7 @@ const disableNotifications = requiredElement<HTMLButtonElement>(
   "disable-notifications",
 );
 const pushStatus = requiredElement("push-status");
+const metricsStatus = requiredElement("metrics-status");
 const clearButton = requiredElement<HTMLButtonElement>("clear");
 const statusCard = requiredElement<HTMLElement>("status").closest(
   ".status-card",
@@ -218,6 +228,39 @@ function displayMessage(message: string, id?: string): void {
   });
   item.append(body, time);
   messageList.prepend(item);
+  void refreshMetrics();
+}
+
+async function refreshMetrics(): Promise<void> {
+  try {
+    const response = await fetch("/api/metrics", {
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    const body = (await response.json()) as Partial<NotificationCounts> & {
+      error?: unknown;
+    };
+    if (!response.ok) {
+      throw new Error(
+        typeof body.error === "string"
+          ? body.error
+          : `metrics request failed (${response.status})`,
+      );
+    }
+    for (const window of METRIC_WINDOWS) {
+      const value = body[window];
+      requiredElement(`metric-${window}`).textContent =
+        typeof value === "number" ? value.toLocaleString() : "-";
+    }
+    metricsStatus.textContent = "";
+    metricsStatus.classList.remove("error");
+  } catch (error) {
+    metricsStatus.textContent = `Unable to load metrics: ${
+      error instanceof Error ? error.message : "Unknown error"
+    }`;
+    metricsStatus.classList.add("error");
+  }
 }
 
 async function runPushTask(
@@ -264,9 +307,30 @@ function setPushStatus(message: string, isError = false): void {
   pushStatus.classList.toggle("error", isError);
 }
 
+/** Carries the HTTP status so expired sessions can offer a sign-in link. */
+class SessionAwareError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
 function setPushError(context: string, error: unknown): void {
   const detail = error instanceof Error ? error.message : "Unknown error";
   setPushStatus(`${context}: ${detail}`, true);
+  if (
+    error instanceof SessionAwareError &&
+    (error.status === 401 || error.status === 403)
+  ) {
+    // The Microsoft session expired or lost its identity while the page stayed
+    // open, so recovering needs a fresh sign-in rather than a retry.
+    const signIn = document.createElement("a");
+    signIn.href = "/.auth/login/aad?post_login_redirect_uri=/";
+    signIn.textContent = "Sign in again";
+    pushStatus.append(" ", signIn);
+  }
 }
 
 async function fetchPushConfig(): Promise<string> {
@@ -279,10 +343,11 @@ async function fetchPushConfig(): Promise<string> {
     const body = (await response.json().catch(() => null)) as {
       error?: unknown;
     } | null;
-    throw new Error(
+    throw new SessionAwareError(
       typeof body?.error === "string"
         ? body.error
         : `configuration request failed (${response.status})`,
+      response.status,
     );
   }
 
@@ -337,7 +402,10 @@ async function savePushSubscription(
     body: JSON.stringify(subscription.toJSON()),
   });
   if (!response.ok) {
-    throw new Error(`subscription request failed (${response.status})`);
+    throw new SessionAwareError(
+      `subscription request failed (${response.status})`,
+      response.status,
+    );
   }
 }
 
@@ -592,3 +660,4 @@ if ("Notification" in window) {
 }
 
 void connect();
+void refreshMetrics();

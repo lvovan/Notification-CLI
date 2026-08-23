@@ -123,13 +123,24 @@ export function authorizeBrowserRequest(
       error: `${AUTHORIZED_USERS_ENV} is not configured.`,
     };
   }
-  if (!email || !authorizedUsers.has(email)) {
+  // A principal without a resolvable email is a broken session rather than an
+  // unauthorized account, so signing in again is the remedy.
+  if (!email) {
+    return {
+      authorized: false,
+      authenticated: true,
+      status: 401,
+      error:
+        "The Microsoft account session did not include an email address.",
+    };
+  }
+  if (!authorizedUsers.has(email)) {
     return {
       authorized: false,
       authenticated: true,
       email,
       status: 403,
-      error: "This Microsoft account is not authorized.",
+      error: `This Microsoft account (${email}) is not authorized.`,
     };
   }
 

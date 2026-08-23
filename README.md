@@ -108,14 +108,36 @@ set:
 | `NOTIFICATION_CLI_VAPID_PUBLIC_KEY` | Push only. URL-safe VAPID public key returned to authorized browsers |
 | `NOTIFICATION_CLI_VAPID_PRIVATE_KEY` | Push only. Secret VAPID private key used only by the API |
 | `NOTIFICATION_CLI_VAPID_SUBJECT` | Push only. VAPID contact URI, normally `mailto:you@example.com` |
-| `NOTIFICATION_CLI_PUSH_STORAGE_CONNECTION_STRING` | Push only. Azure Storage connection string used for durable push subscriptions |
+| `NOTIFICATION_CLI_STORAGE_CONNECTION_STRING` | Azure Storage connection string used for durable push subscriptions and notification metrics |
 
-Real-time delivery through Web PubSub is the required core transport. The four
+> This setting was previously named
+> `NOTIFICATION_CLI_PUSH_STORAGE_CONNECTION_STRING`. Rename it in the Static
+> Web App configuration, otherwise background push and metrics both switch off
+> silently.
+
+Real-time delivery through Web PubSub is the required core transport. The
 "push only" settings are an optional enhancement: when any of them is missing,
 notifications are still delivered live to open pages and the response reports
 `"pushConfigured": false` instead of failing. Missing a **required** setting
 makes `/api/notify` answer `503` naming the exact variable, for example
 `{"error":"NOTIFICATION_CLI_API_KEY is not configured."}`.
+
+## Notification metrics
+
+Every notification accepted by Web PubSub is recorded in the
+`NotificationMetrics` table of the storage account, and the frontend shows how
+many were sent in the last 24 hours, 7 days and 30 days, along with the
+lifetime total.
+
+Each send writes one row partitioned by UTC day, so the windowed counts need a
+single range query over at most 31 day partitions. The lifetime total is a
+separate counter entity updated with an ETag precondition, which keeps it
+accurate under concurrent sends without ever scanning the whole table.
+
+Metrics are telemetry: if the storage account is unreachable the notification
+is still delivered, and the response reports the problem in `delivery.metricError`
+rather than failing. Rows older than 30 days are never queried, so they can be
+deleted at any time without affecting the total.
 
 Generate a VAPID key pair once and keep it stable. Rotating it requires clients
 to create a new browser subscription:
