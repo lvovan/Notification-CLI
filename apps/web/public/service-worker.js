@@ -34,7 +34,11 @@ self.addEventListener("fetch", (event) => {
   }
 
   const url = new URL(request.url);
-  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) {
+  if (
+    url.origin !== self.location.origin ||
+    url.pathname.startsWith("/api/") ||
+    url.pathname.startsWith("/.auth/")
+  ) {
     return;
   }
 
@@ -68,10 +72,8 @@ self.addEventListener("notificationclick", (event) => {
 });
 
 const CACHE_PREFIX = "notification-cli-shell-";
-const CACHE_NAME = `${CACHE_PREFIX}v4`;
+const CACHE_NAME = `${CACHE_PREFIX}v5`;
 const APP_SHELL = [
-  "/",
-  "/index.html",
   "/manifest.webmanifest",
   "/icon.svg",
   "/icon-192.png",
@@ -79,6 +81,19 @@ const APP_SHELL = [
   "/icon-maskable-512.png",
   "/apple-touch-icon.png",
 ];
+const CACHEABLE_ASSET = /\.(?:css|js|mjs|json|webmanifest|png|svg|ico|woff2?)$/;
+
+/**
+ * Authentication endpoints must never be fetched or cached by the worker:
+ * requesting /.auth/logout during install would sign the user out.
+ */
+function isCacheableAssetPath(pathname) {
+  return (
+    !pathname.startsWith("/.auth/") &&
+    !pathname.startsWith("/api/") &&
+    CACHEABLE_ASSET.test(pathname)
+  );
+}
 
 function parsePushNotification(data) {
   const defaults = {
@@ -167,10 +182,18 @@ async function cacheAppShell() {
   const html = await indexResponse.text();
   const assetUrls = [...html.matchAll(/(?:src|href)="([^"]+)"/g)]
     .map((match) => new URL(match[1], self.location.origin))
-    .filter((url) => url.origin === self.location.origin)
+    .filter(
+      (url) =>
+        url.origin === self.location.origin &&
+        isCacheableAssetPath(url.pathname),
+    )
     .map((url) => `${url.pathname}${url.search}`);
 
-  await cache.addAll([...new Set([...APP_SHELL.slice(2), ...assetUrls])]);
+  // Individual assets are cached independently so a single missing icon
+  // cannot reject installation and leave the worker permanently inactive.
+  await Promise.allSettled(
+    [...new Set([...APP_SHELL, ...assetUrls])].map((url) => cache.add(url)),
+  );
 }
 
 async function networkFirstNavigation(request) {

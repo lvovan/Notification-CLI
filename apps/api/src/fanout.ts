@@ -16,8 +16,8 @@ export const MAX_NOTIFICATION_MESSAGE_LENGTH = 1000;
 
 interface WebPubSubSender {
   sendToAll(
-    message: string,
-    options: { contentType: string },
+    message: object,
+    options: { contentType: "application/json" },
   ): Promise<unknown>;
 }
 
@@ -166,13 +166,16 @@ export async function fanOutNotification(
   const sender = dependencies?.webPush ?? tryCreateWebPushSender(env);
   report.pushConfigured = Boolean(store && sender);
 
-  const notification = JSON.stringify({
+  const notification = {
     id: (dependencies?.notificationId ?? randomUUID)(),
     title: "Notification CLI",
     body: message,
-  });
+  };
+  const pushPayload = JSON.stringify(notification);
 
   const results = await Promise.allSettled([
+    // The SDK serializes JSON payloads itself, so the object must be passed
+    // through unstringified to avoid double-encoding it for browsers.
     webPubSub.sendToAll(notification, { contentType: "application/json" }),
     (async () => {
       if (!store || !sender || authorizedUsers.size === 0) {
@@ -183,7 +186,7 @@ export async function fanOutNotification(
         subscriptions,
         store,
         sender,
-        notification,
+        pushPayload,
         report,
       );
     })(),

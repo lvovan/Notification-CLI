@@ -161,28 +161,41 @@ function setOfflineState(): void {
   connectivity.hidden = false;
 }
 
+function decodeJsonPayload(value: string): unknown {
+  let current: unknown = value;
+  // Payloads can arrive JSON-encoded more than once depending on how the
+  // transport serializes them, so unwrap nested string encodings.
+  for (let depth = 0; depth < 3 && typeof current === "string"; depth += 1) {
+    try {
+      current = JSON.parse(current);
+    } catch {
+      return current;
+    }
+  }
+  return current;
+}
+
 function parseIncomingNotification(value: unknown): IncomingNotification {
   if (typeof value !== "string") {
     return { message: "New notification" };
   }
-  try {
-    const payload = JSON.parse(value) as {
-      id?: unknown;
-      body?: unknown;
-      message?: unknown;
-    };
-    const message =
-      typeof payload.body === "string"
-        ? payload.body
-        : typeof payload.message === "string"
-          ? payload.message
-          : value;
-    return typeof payload.id === "string"
-      ? { id: payload.id, message }
-      : { message };
-  } catch {
-    return { message: value };
+  const payload = decodeJsonPayload(value);
+  if (typeof payload === "string") {
+    return { message: payload };
   }
+  if (payload !== null && typeof payload === "object") {
+    const record = payload as Record<string, unknown>;
+    const message =
+      typeof record.body === "string"
+        ? record.body
+        : typeof record.message === "string"
+          ? record.message
+          : JSON.stringify(payload, null, 2);
+    return typeof record.id === "string"
+      ? { id: record.id, message }
+      : { message };
+  }
+  return { message: String(payload) };
 }
 
 function displayMessage(message: string, id?: string): void {
@@ -207,15 +220,30 @@ function displayMessage(message: string, id?: string): void {
   messageList.prepend(item);
 }
 
-async function requestNotificationPermission(): Promise<void> {
+async function runPushTask(
+  action: () => Promise<void>,
+  failureContext: string,
+): Promise<void> {
   if (pushBusy) {
     return;
   }
 
   pushBusy = true;
   enableNotifications.disabled = true;
-  setPushStatus("Waiting for notification permission...");
   try {
+    await action();
+  } catch (error) {
+    enableNotifications.hidden = false;
+    setPushError(failureContext, error);
+  } finally {
+    pushBusy = false;
+    enableNotifications.disabled = false;
+  }
+}
+
+function requestNotificationPermission(): Promise<void> {
+  return runPushTask(async () => {
+    setPushStatus("Waiting for notification permission...");
     const permission = await Notification.requestPermission();
     if (permission !== "granted") {
       enableNotifications.hidden = permission === "denied";
@@ -228,12 +256,7 @@ async function requestNotificationPermission(): Promise<void> {
       return;
     }
     await syncPushSubscription();
-  } catch (error) {
-    setPushError("Unable to enable background notifications", error);
-  } finally {
-    pushBusy = false;
-    enableNotifications.disabled = false;
-  }
+  }, "Unable to enable background notifications");
 }
 
 function setPushStatus(message: string, isError = false): void {
@@ -253,7 +276,14 @@ async function fetchPushConfig(): Promise<string> {
     cache: "no-store",
   });
   if (!response.ok) {
-    throw new Error(`configuration request failed (${response.status})`);
+    const body = (await response.json().catch(() => null)) as {
+      error?: unknown;
+    } | null;
+    throw new Error(
+      typeof body?.error === "string"
+        ? body.error
+        : `configuration request failed (${response.status})`,
+    );
   }
 
   const config = (await response.json()) as Partial<PushConfigResponse>;
@@ -261,6 +291,25 @@ async function fetchPushConfig(): Promise<string> {
     throw new Error("server returned an invalid public key");
   }
   return config.publicKey;
+}
+
+/**
+ * `navigator.serviceWorker.ready` never settles when installation fails, so it
+ * is bounded to keep the interface out of a permanent "setting up" state.
+ */
+function activeServiceWorker(): Promise<ServiceWorkerRegistration> {
+  return Promise.race([
+    navigator.serviceWorker.ready,
+    new Promise<never>((_, reject) => {
+      window.setTimeout(
+        () =>
+          reject(
+            new Error("the offline service worker did not finish installing"),
+          ),
+        15_000,
+      );
+    }),
+  ]);
 }
 
 function decodeApplicationServerKey(value: string): ArrayBuffer {
@@ -309,7 +358,7 @@ async function syncPushSubscription(): Promise<void> {
   }
 
   setPushStatus("Setting up background notifications...");
-  const registration = await navigator.serviceWorker.ready;
+  const registration = await activeServiceWorker();
   const publicKey = await fetchPushConfig();
   const applicationServerKey = decodeApplicationServerKey(publicKey);
   let subscription = await registration.pushManager.getSubscription();
@@ -357,7 +406,7 @@ async function unsubscribeFromPush(): Promise<void> {
   disableNotifications.disabled = true;
   setPushStatus("Disabling background notifications...");
   try {
-    const registration = await navigator.serviceWorker.ready;
+    const registration = await activeServiceWorker();
     const subscription = await registration.pushManager.getSubscription();
     if (!subscription) {
       enableNotifications.hidden = Notification.permission !== "granted";
@@ -526,11 +575,10 @@ if ("serviceWorker" in navigator) {
 }
 if ("Notification" in window) {
   if (Notification.permission === "granted") {
-    enableNotifications.hidden = true;
-    void syncPushSubscription().catch((error: unknown) => {
-      enableNotifications.hidden = false;
-      setPushError("Unable to refresh background notifications", error);
-    });
+    void runPushTask(
+      syncPushSubscription,
+      "Unable to refresh background notifications",
+    );
   } else if (Notification.permission === "denied") {
     enableNotifications.hidden = true;
     setPushStatus(

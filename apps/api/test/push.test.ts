@@ -166,7 +166,7 @@ test("rejects invalid subscription requests before storage", async () => {
 
 test("fan-out delivers through Web PubSub and Web Push", async () => {
   const store = new MemoryStore([storedSubscription]);
-  const pubSubMessages: string[] = [];
+  const pubSubMessages: object[] = [];
   const pushPayloads: string[] = [];
   const report = await fanOutNotification("hello", {
     env: authorizedEnv,
@@ -185,13 +185,15 @@ test("fan-out delivers through Web PubSub and Web Push", async () => {
   });
 
   assert.deepEqual(store.listedIdentities, ["user@example.com"]);
-  const notificationPayload = JSON.stringify({
+  const notification = {
     id: "notification-id",
     title: "Notification CLI",
     body: "hello",
-  });
-  assert.deepEqual(pubSubMessages, [notificationPayload]);
-  assert.deepEqual(pushPayloads, [notificationPayload]);
+  };
+  // The Web PubSub SDK serializes JSON payloads itself; sending a string here
+  // would double-encode the notification and reach browsers as quoted JSON.
+  assert.deepEqual(pubSubMessages, [notification]);
+  assert.deepEqual(pushPayloads, [JSON.stringify(notification)]);
   assert.deepEqual(report, {
     webPubSubDelivered: true,
     pushConfigured: true,
@@ -204,7 +206,7 @@ test("fan-out delivers through Web PubSub and Web Push", async () => {
 });
 
 test("fan-out succeeds through Web PubSub alone when push is not configured", async () => {
-  const pubSubMessages: string[] = [];
+  const pubSubMessages: object[] = [];
   const report = await fanOutNotification("hello", {
     env: { AUTHORIZED_USERS: "user@example.com" },
     notificationId: () => "notification-id",

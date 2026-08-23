@@ -54,6 +54,81 @@ async function loadPushHandler(visible: boolean) {
   return { push, notifications, messages };
 }
 
+test("installation never requests authentication endpoints and tolerates missing assets", async () => {
+  const source = await readFile(
+    resolve("../web/public/service-worker.js"),
+    "utf8",
+  );
+  const html = await readFile(resolve("../web/index.html"), "utf8");
+  assert.match(html, /href="\/\.auth\//);
+
+  const handlers = new Map<string, WorkerHandler>();
+  const requested: string[] = [];
+  const cached: string[] = [];
+  const cache = {
+    put: async () => undefined,
+    add: async (url: string) => {
+      requested.push(url);
+      if (url.endsWith(".png")) {
+        throw new Error("asset is not deployed");
+      }
+      cached.push(url);
+    },
+  };
+  const worker = {
+    addEventListener(type: string, handler: WorkerHandler) {
+      handlers.set(type, handler);
+    },
+    location: { origin: "https://example.test" },
+  };
+  const evaluate = new Function(
+    "self",
+    "caches",
+    "fetch",
+    "Response",
+    "URL",
+    source,
+  );
+  evaluate(
+    worker,
+    { open: async () => cache },
+    async (input: string) => {
+      requested.push(input);
+      return {
+        ok: true,
+        clone() {
+          return this;
+        },
+        text: async () => html,
+      };
+    },
+    Response,
+    URL,
+  );
+
+  const install = handlers.get("install");
+  assert.ok(install);
+  let completion: Promise<unknown> | undefined;
+  install({
+    waitUntil: (promise) => {
+      completion = promise;
+    },
+  });
+  await completion;
+
+  assert.deepEqual(
+    requested.filter((url) => url.startsWith("/.auth/")),
+    [],
+    "signing the user out during installation must never happen",
+  );
+  assert.deepEqual(
+    requested.filter((url) => url.startsWith("/api/")),
+    [],
+  );
+  assert.ok(cached.includes("/icon.svg"));
+  assert.ok(cached.includes("/manifest.webmanifest"));
+});
+
 test("background push displays a system notification", async () => {
   const { push, notifications } = await loadPushHandler(false);
   let completion: Promise<unknown> | undefined;
