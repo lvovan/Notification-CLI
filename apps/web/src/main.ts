@@ -284,6 +284,19 @@ async function loadNotificationHistory(): Promise<void> {
   }
 }
 
+/**
+ * Caps the rendered value at five characters so no count can overflow a tile.
+ * The exact figure stays available as the element's tooltip.
+ */
+function formatMetric(value: number): string {
+  return value < 10_000
+    ? value.toLocaleString()
+    : value.toLocaleString(undefined, {
+        notation: "compact",
+        maximumFractionDigits: 1,
+      });
+}
+
 async function refreshMetrics(): Promise<void> {
   try {
     const response = await fetch("/api/metrics", {
@@ -303,8 +316,10 @@ async function refreshMetrics(): Promise<void> {
     }
     for (const window of METRIC_WINDOWS) {
       const value = body[window];
-      requiredElement(`metric-${window}`).textContent =
-        typeof value === "number" ? value.toLocaleString() : "-";
+      const element = requiredElement(`metric-${window}`);
+      element.textContent =
+        typeof value === "number" ? formatMetric(value) : "-";
+      element.title = typeof value === "number" ? value.toLocaleString() : "";
     }
     metricsStatus.textContent = "";
     metricsStatus.classList.remove("error");

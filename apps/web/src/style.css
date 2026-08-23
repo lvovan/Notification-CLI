@@ -293,26 +293,39 @@ a {
 }
 
 .metrics > div {
-  padding: 0.5rem 0.35rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.15rem;
+  padding: 0.5rem 0.3rem;
   border: 1px solid var(--cp-border);
   border-radius: 0.625rem;
   background: var(--cp-surface);
   text-align: center;
 }
 
+/* Reserve two lines so wrapped and single-line labels keep the values aligned. */
 .metrics dt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.1em;
   color: var(--cp-text-muted);
-  font-size: 0.65rem;
+  font-size: 0.62rem;
+  line-height: 1.05;
   text-transform: uppercase;
   letter-spacing: 0.02em;
 }
 
 .metrics dd {
-  margin: 0.15rem 0 0;
+  margin: 0;
   color: var(--cp-text);
   font-size: 1.15rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  white-space: nowrap;
 }
 
 .section-heading {
