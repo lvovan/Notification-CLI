@@ -17,6 +17,27 @@
       "statusCode": 404
     },
     {
+      "route": "/service-worker.js",
+      "allowedRoles": ["authenticated"],
+      "headers": {
+        "Cache-Control": "no-cache"
+      }
+    },
+    {
+      "route": "/index.html",
+      "allowedRoles": ["authenticated"],
+      "headers": {
+        "Cache-Control": "no-cache"
+      }
+    },
+    {
+      "route": "/",
+      "allowedRoles": ["authenticated"],
+      "headers": {
+        "Cache-Control": "no-cache"
+      }
+    },
+    {
       "route": "/*",
       "allowedRoles": ["authenticated"]
     }

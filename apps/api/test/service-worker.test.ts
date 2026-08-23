@@ -160,6 +160,7 @@ test("visible clients receive push payloads without duplicate system notificatio
         id: "notification-id",
         title: "Notification CLI",
         body: "Build complete",
+        sentAt: 1_700_000_000_000,
       }),
       text: () => "",
     },
@@ -175,6 +176,7 @@ test("visible clients receive push payloads without duplicate system notificatio
       type: "PUSH_NOTIFICATION",
       id: "notification-id",
       message: "Build complete",
+      sentAt: 1_700_000_000_000,
     },
   ]);
 });

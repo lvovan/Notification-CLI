@@ -6,6 +6,7 @@ import {
 import { handleMcpRequest } from "./mcp.js";
 import { handleMetricsRequest } from "./metrics.js";
 import { handleNotifyRequest } from "./notify.js";
+import { handleNotificationsRequest } from "./notifications.js";
 import {
   handleDeletePushSubscription,
   handlePushConfigRequest,
@@ -59,6 +60,13 @@ app.http("metrics", {
   authLevel: "anonymous",
   route: "metrics",
   handler: (request) => handleMetricsRequest(request),
+});
+
+app.http("notifications", {
+  methods: ["GET"],
+  authLevel: "anonymous",
+  route: "notifications",
+  handler: (request) => handleNotificationsRequest(request),
 });
 
 app.http("notify", {

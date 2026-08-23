@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
-import { TableClient, type TableEntity } from "@azure/data-tables";
-import { hasSetting, requireSetting } from "./configuration.js";
-import { STORAGE_CONNECTION_STRING_ENV } from "./metrics-storage.js";
+import { type TableClient, type TableEntity } from "@azure/data-tables";
+import {
+  createTableClient,
+  ensureTable,
+  tableStatusCode,
+  tryCreateTableClient,
+} from "./table-storage.js";
 
 export const PUSH_SUBSCRIPTIONS_TABLE = "PushSubscriptions";
 
@@ -32,15 +36,6 @@ export interface PushSubscriptionData {
 
 function keyHash(value: string): string {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function statusCode(error: unknown): number | undefined {
-  return typeof error === "object" &&
-    error !== null &&
-    "statusCode" in error &&
-    typeof error.statusCode === "number"
-    ? error.statusCode
-    : undefined;
 }
 
 export function parsePushSubscription(
@@ -99,28 +94,13 @@ export function parsePushSubscription(
 export class AzureTablePushSubscriptionStore
   implements PushSubscriptionStore
 {
-  private tableReady: Promise<void> | undefined;
-
   constructor(private readonly client: TableClient) {}
-
-  private ensureTable(): Promise<void> {
-    this.tableReady ??= this.client.createTable().then(
-      () => undefined,
-      (error: unknown) => {
-        if (statusCode(error) !== 409) {
-          this.tableReady = undefined;
-          throw error;
-        }
-      },
-    );
-    return this.tableReady;
-  }
 
   async save(
     identity: string,
     subscription: PushSubscriptionData,
   ): Promise<void> {
-    await this.ensureTable();
+    await ensureTable(this.client);
     const entity: TableEntity = {
       partitionKey: keyHash(identity),
       rowKey: keyHash(subscription.endpoint),
@@ -135,25 +115,25 @@ export class AzureTablePushSubscriptionStore
   }
 
   async remove(identity: string, endpoint: string): Promise<void> {
-    await this.ensureTable();
+    await ensureTable(this.client);
     try {
       await this.client.deleteEntity(keyHash(identity), keyHash(endpoint));
     } catch (error) {
-      if (statusCode(error) !== 404) {
+      if (tableStatusCode(error) !== 404) {
         throw error;
       }
     }
   }
 
   async removeStored(subscription: StoredPushSubscription): Promise<void> {
-    await this.ensureTable();
+    await ensureTable(this.client);
     try {
       await this.client.deleteEntity(
         subscription.partitionKey,
         subscription.rowKey,
       );
     } catch (error) {
-      if (statusCode(error) !== 404) {
+      if (tableStatusCode(error) !== 404) {
         throw error;
       }
     }
@@ -162,7 +142,7 @@ export class AzureTablePushSubscriptionStore
   async list(
     authorizedIdentities: Iterable<string>,
   ): Promise<StoredPushSubscription[]> {
-    await this.ensureTable();
+    await ensureTable(this.client);
     const authorizedPartitions = new Set(
       Array.from(authorizedIdentities, keyHash),
     );
@@ -185,10 +165,7 @@ export function createPushSubscriptionStore(
   env: NodeJS.ProcessEnv = process.env,
 ): PushSubscriptionStore {
   return new AzureTablePushSubscriptionStore(
-    TableClient.fromConnectionString(
-      requireSetting(env, STORAGE_CONNECTION_STRING_ENV),
-      PUSH_SUBSCRIPTIONS_TABLE,
-    ),
+    createTableClient(env, PUSH_SUBSCRIPTIONS_TABLE),
   );
 }
 
@@ -196,7 +173,6 @@ export function createPushSubscriptionStore(
 export function tryCreatePushSubscriptionStore(
   env: NodeJS.ProcessEnv = process.env,
 ): PushSubscriptionStore | null {
-  return hasSetting(env, STORAGE_CONNECTION_STRING_ENV)
-    ? createPushSubscriptionStore(env)
-    : null;
+  const client = tryCreateTableClient(env, PUSH_SUBSCRIPTIONS_TABLE);
+  return client ? new AzureTablePushSubscriptionStore(client) : null;
 }

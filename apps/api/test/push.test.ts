@@ -26,6 +26,8 @@ const authorizedEnv = {
   NOTIFICATION_CLI_VAPID_PUBLIC_KEY: `B${"A".repeat(86)}`,
 };
 
+const SENT_AT = new Date("2026-03-15T12:00:00.000Z");
+
 function principalHeader(email = " User@Example.com "): string {
   return Buffer.from(
     JSON.stringify({
@@ -171,6 +173,7 @@ test("fan-out delivers through Web PubSub and Web Push", async () => {
   const report = await fanOutNotification("hello", {
     env: authorizedEnv,
     notificationId: () => "notification-id",
+    now: () => SENT_AT,
     webPubSub: {
       sendToAll: async (message) => {
         pubSubMessages.push(message);
@@ -189,6 +192,7 @@ test("fan-out delivers through Web PubSub and Web Push", async () => {
     id: "notification-id",
     title: "Notification CLI",
     body: "hello",
+    sentAt: SENT_AT.getTime(),
   };
   // The Web PubSub SDK serializes JSON payloads itself; sending a string here
   // would double-encode the notification and reach browsers as quoted JSON.

@@ -1,6 +1,9 @@
 export class ConfigurationError extends Error {
-  constructor(public readonly setting: string) {
-    super(`${setting} is not configured.`);
+  constructor(
+    public readonly setting: string,
+    message = `${setting} is not configured.`,
+  ) {
+    super(message);
     this.name = "ConfigurationError";
   }
 }

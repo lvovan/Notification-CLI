@@ -1,15 +1,19 @@
 import { randomUUID } from "node:crypto";
-import { odata, TableClient, type TableEntity } from "@azure/data-tables";
-import { hasSetting, requireSetting } from "./configuration.js";
+import { odata, type TableClient, type TableEntity } from "@azure/data-tables";
+import {
+  createTableClient,
+  DAY_MS,
+  dayKey,
+  ensureTable,
+  tableStatusCode,
+  tryCreateTableClient,
+} from "./table-storage.js";
 
-export const STORAGE_CONNECTION_STRING_ENV =
-  "NOTIFICATION_CLI_STORAGE_CONNECTION_STRING";
 export const NOTIFICATION_METRICS_TABLE = "NotificationMetrics";
 
 const TOTAL_PARTITION_KEY = "totals";
 const TOTAL_ROW_KEY = "all";
-const DAY_MS = 24 * 60 * 60 * 1000;
-const RETENTION_DAYS = 30;
+const METRICS_WINDOW_DAYS = 30;
 const MAX_TOTAL_ATTEMPTS = 5;
 
 export interface NotificationCounts {
@@ -30,20 +34,6 @@ interface SentNotificationEntity {
   sentAt: number;
 }
 
-function statusCode(error: unknown): number | undefined {
-  return typeof error === "object" &&
-    error !== null &&
-    "statusCode" in error &&
-    typeof error.statusCode === "number"
-    ? error.statusCode
-    : undefined;
-}
-
-/** UTC day key, lexicographically ordered so range queries scan whole days. */
-function dayKey(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
 export function countWindows(
   sentAtValues: Iterable<number>,
   now: Date,
@@ -53,7 +43,7 @@ export function countWindows(
   const counts = { last24Hours: 0, last7Days: 0, last30Days: 0, total };
   for (const sentAt of sentAtValues) {
     const age = nowMs - sentAt;
-    if (age < 0 || age > RETENTION_DAYS * DAY_MS) {
+    if (age < 0 || age > METRICS_WINDOW_DAYS * DAY_MS) {
       continue;
     }
     counts.last30Days += 1;
@@ -70,25 +60,10 @@ export function countWindows(
 export class AzureTableNotificationMetricsStore
   implements NotificationMetricsStore
 {
-  private tableReady: Promise<void> | undefined;
-
   constructor(private readonly client: TableClient) {}
 
-  private ensureTable(): Promise<void> {
-    this.tableReady ??= this.client.createTable().then(
-      () => undefined,
-      (error: unknown) => {
-        if (statusCode(error) !== 409) {
-          this.tableReady = undefined;
-          throw error;
-        }
-      },
-    );
-    return this.tableReady;
-  }
-
   async record(sentAt: Date): Promise<void> {
-    await this.ensureTable();
+    await ensureTable(this.client);
     const entity: TableEntity<{ sentAt: number }> = {
       partitionKey: dayKey(sentAt),
       // A unique row key keeps concurrent sends from overwriting each other.
@@ -121,7 +96,7 @@ export class AzureTableNotificationMetricsStore
         );
         return;
       } catch (error) {
-        const status = statusCode(error);
+        const status = tableStatusCode(error);
         if (status === 404) {
           try {
             await this.client.createEntity({
@@ -131,7 +106,7 @@ export class AzureTableNotificationMetricsStore
             });
             return;
           } catch (createError) {
-            if (statusCode(createError) !== 409) {
+            if (tableStatusCode(createError) !== 409) {
               throw createError;
             }
           }
@@ -151,7 +126,7 @@ export class AzureTableNotificationMetricsStore
       );
       return typeof entity.count === "number" ? entity.count : 0;
     } catch (error) {
-      if (statusCode(error) === 404) {
+      if (tableStatusCode(error) === 404) {
         return 0;
       }
       throw error;
@@ -159,8 +134,10 @@ export class AzureTableNotificationMetricsStore
   }
 
   async counts(now: Date): Promise<NotificationCounts> {
-    await this.ensureTable();
-    const oldest = dayKey(new Date(now.getTime() - RETENTION_DAYS * DAY_MS));
+    await ensureTable(this.client);
+    const oldest = dayKey(
+      new Date(now.getTime() - METRICS_WINDOW_DAYS * DAY_MS),
+    );
     const newest = dayKey(now);
     // Both bounds are day keys, which also excludes the "totals" partition.
     const filter = odata`PartitionKey ge ${oldest} and PartitionKey le ${newest}`;
@@ -181,10 +158,7 @@ export function createNotificationMetricsStore(
   env: NodeJS.ProcessEnv = process.env,
 ): NotificationMetricsStore {
   return new AzureTableNotificationMetricsStore(
-    TableClient.fromConnectionString(
-      requireSetting(env, STORAGE_CONNECTION_STRING_ENV),
-      NOTIFICATION_METRICS_TABLE,
-    ),
+    createTableClient(env, NOTIFICATION_METRICS_TABLE),
   );
 }
 
@@ -192,7 +166,6 @@ export function createNotificationMetricsStore(
 export function tryCreateNotificationMetricsStore(
   env: NodeJS.ProcessEnv = process.env,
 ): NotificationMetricsStore | null {
-  return hasSetting(env, STORAGE_CONNECTION_STRING_ENV)
-    ? createNotificationMetricsStore(env)
-    : null;
+  const client = tryCreateTableClient(env, NOTIFICATION_METRICS_TABLE);
+  return client ? new AzureTableNotificationMetricsStore(client) : null;
 }

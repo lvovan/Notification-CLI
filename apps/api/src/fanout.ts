@@ -7,6 +7,13 @@ import {
   type NotificationMetricsStore,
 } from "./metrics-storage.js";
 import {
+  parseRetentionDays,
+  RETENTION_DAYS_ENV,
+  tryCreateNotificationHistoryStore,
+  type NotificationHistoryStore,
+  type StoredNotification,
+} from "./notification-storage.js";
+import {
   tryCreatePushSubscriptionStore,
   type PushSubscriptionStore,
   type StoredPushSubscription,
@@ -41,6 +48,9 @@ export interface FanoutReport {
   pushFailed: number;
   metricRecorded?: boolean;
   metricError?: string;
+  historyRecorded?: boolean;
+  historyPruned?: number;
+  historyError?: string;
   errors: string[];
 }
 
@@ -143,6 +153,31 @@ async function deliverWebPush(
   );
 }
 
+/**
+ * Stores the notification so it can be read again later, then lazily sweeps
+ * whatever has aged out of the retention window. Neither step may turn a
+ * delivered notification into a reported delivery failure.
+ */
+async function retainNotification(
+  notification: StoredNotification,
+  sentAt: Date,
+  env: NodeJS.ProcessEnv,
+  report: FanoutReport,
+  store = tryCreateNotificationHistoryStore(env),
+): Promise<void> {
+  if (!store) {
+    return;
+  }
+  try {
+    const retentionDays = parseRetentionDays(env[RETENTION_DAYS_ENV]);
+    await store.append(notification);
+    report.historyRecorded = true;
+    report.historyPruned = await store.prune(sentAt, retentionDays);
+  } catch (error) {
+    report.historyError = errorMessage(error);
+  }
+}
+
 export async function fanOutNotification(
   message: string,
   dependencies?: {
@@ -150,6 +185,7 @@ export async function fanOutNotification(
     store?: PushSubscriptionStore;
     webPush?: WebPushSender;
     metrics?: NotificationMetricsStore;
+    history?: NotificationHistoryStore;
     env?: NodeJS.ProcessEnv;
     notificationId?: () => string;
     now?: () => Date;
@@ -174,10 +210,12 @@ export async function fanOutNotification(
   const sender = dependencies?.webPush ?? tryCreateWebPushSender(env);
   report.pushConfigured = Boolean(store && sender);
 
+  const sentAt = (dependencies?.now ?? (() => new Date()))();
   const notification = {
     id: (dependencies?.notificationId ?? randomUUID)(),
     title: "Notification CLI",
     body: message,
+    sentAt: sentAt.getTime(),
   };
   const pushPayload = JSON.stringify(notification);
 
@@ -206,7 +244,7 @@ export async function fanOutNotification(
       dependencies?.metrics ?? tryCreateNotificationMetricsStore(env);
     if (metrics) {
       try {
-        await metrics.record((dependencies?.now ?? (() => new Date()))());
+        await metrics.record(sentAt);
         report.metricRecorded = true;
       } catch (error) {
         // Metrics are telemetry: a storage failure must never turn a delivered
@@ -214,6 +252,7 @@ export async function fanOutNotification(
         report.metricError = errorMessage(error);
       }
     }
+    await retainNotification(notification, sentAt, env, report, dependencies?.history);
   } else {
     report.errors.push(
       `Web PubSub delivery failed: ${errorMessage(results[0].reason)}`,

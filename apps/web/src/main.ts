@@ -15,11 +15,23 @@ const METRIC_WINDOWS = [
   "total",
 ] as const;
 
+/** Long-lived home screen apps still pick up a deployment within the hour. */
+const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+/** One resume can fire pageshow, focus and visibilitychange together. */
+const UPDATE_CHECK_THROTTLE_MS = 60 * 1000;
+
 type NotificationCounts = Record<(typeof METRIC_WINDOWS)[number], number>;
 
 interface IncomingNotification {
   id?: string;
   message: string;
+  sentAt?: number;
+}
+
+interface RetainedNotification {
+  id: string;
+  body: string;
+  sentAt: number;
 }
 
 interface BeforeInstallPromptEvent extends Event {
@@ -40,6 +52,7 @@ const disableNotifications = requiredElement<HTMLButtonElement>(
 );
 const pushStatus = requiredElement("push-status");
 const metricsStatus = requiredElement("metrics-status");
+const messagesStatus = requiredElement("messages-status");
 const clearButton = requiredElement<HTMLButtonElement>("clear");
 const statusCard = requiredElement<HTMLElement>("status").closest(
   ".status-card",
@@ -51,15 +64,13 @@ if (!statusCard) {
 const appActions = document.createElement("div");
 appActions.className = "app-actions";
 const installButton = createActionButton("Install app", "install-app");
-const updateButton = createActionButton("Update app", "update-app");
 const connectivity = document.createElement("p");
 connectivity.className = "connectivity";
 connectivity.setAttribute("role", "status");
 connectivity.setAttribute("aria-live", "polite");
 installButton.hidden = true;
-updateButton.hidden = true;
 connectivity.hidden = true;
-appActions.append(installButton, updateButton);
+appActions.append(installButton);
 statusCard.after(connectivity);
 statusCard.append(appActions);
 
@@ -67,7 +78,6 @@ let reconnectAttempts = 0;
 let reconnectTimer: number | undefined;
 let deliberatelyClosed = false;
 let installPrompt: BeforeInstallPromptEvent | undefined;
-let waitingWorker: ServiceWorker | undefined;
 let refreshing = false;
 let pushBusy = false;
 const displayedNotificationIds = new Set<string>();
@@ -129,7 +139,8 @@ async function connect(): Promise<void> {
     });
     socket.addEventListener("message", (event) => {
       const notification = parseIncomingNotification(event.data);
-      displayMessage(notification.message, notification.id);
+      displayMessage(notification.message, notification.id, notification.sentAt);
+      void refreshMetrics();
     });
     socket.addEventListener("close", () => {
       if (!deliberatelyClosed) {
@@ -201,14 +212,30 @@ function parseIncomingNotification(value: unknown): IncomingNotification {
         : typeof record.message === "string"
           ? record.message
           : JSON.stringify(payload, null, 2);
-    return typeof record.id === "string"
-      ? { id: record.id, message }
-      : { message };
+    return {
+      message,
+      ...(typeof record.id === "string" ? { id: record.id } : {}),
+      ...(typeof record.sentAt === "number" ? { sentAt: record.sentAt } : {}),
+    };
   }
   return { message: String(payload) };
 }
 
-function displayMessage(message: string, id?: string): void {
+function formatSentAt(sent: Date): string {
+  const time: Intl.DateTimeFormatOptions = {
+    hour: "2-digit",
+    minute: "2-digit",
+  };
+  return sent.toDateString() === new Date().toDateString()
+    ? sent.toLocaleTimeString([], time)
+    : sent.toLocaleString([], { month: "short", day: "numeric", ...time });
+}
+
+function displayMessage(
+  message: string,
+  id?: string,
+  sentAt: number = Date.now(),
+): void {
   if (id && displayedNotificationIds.has(id)) {
     return;
   }
@@ -219,16 +246,57 @@ function displayMessage(message: string, id?: string): void {
   const item = document.createElement("li");
   const body = document.createElement("p");
   const time = document.createElement("time");
-  const now = new Date();
+  const sent = new Date(sentAt);
+  item.dataset.sentAt = String(sentAt);
   body.textContent = message;
-  time.dateTime = now.toISOString();
-  time.textContent = now.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  time.dateTime = sent.toISOString();
+  time.textContent = formatSentAt(sent);
   item.append(body, time);
-  messageList.prepend(item);
-  void refreshMetrics();
+  // Retained history and live messages can arrive in any order, so each entry
+  // is placed by its send time to keep the list newest-first.
+  const older = Array.from(messageList.children).find(
+    (child) => Number((child as HTMLElement).dataset.sentAt ?? 0) < sentAt,
+  );
+  messageList.insertBefore(item, older ?? null);
+}
+
+async function loadNotificationHistory(): Promise<void> {
+  try {
+    const response = await fetch("/api/notifications", {
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    const body = (await response.json()) as {
+      retentionDays?: number;
+      notifications?: RetainedNotification[];
+      error?: unknown;
+    };
+    if (!response.ok) {
+      throw new Error(
+        typeof body.error === "string"
+          ? body.error
+          : `history request failed (${response.status})`,
+      );
+    }
+    for (const entry of body.notifications ?? []) {
+      if (typeof entry.body === "string" && typeof entry.sentAt === "number") {
+        displayMessage(entry.body, entry.id, entry.sentAt);
+      }
+    }
+    messagesStatus.textContent =
+      typeof body.retentionDays === "number"
+        ? `Notifications are kept for ${body.retentionDays} day${
+            body.retentionDays === 1 ? "" : "s"
+          }.`
+        : "";
+    messagesStatus.classList.remove("error");
+  } catch (error) {
+    messagesStatus.textContent = `Unable to load earlier notifications: ${
+      error instanceof Error ? error.message : "Unknown error"
+    }`;
+    messagesStatus.classList.add("error");
+  }
 }
 
 async function refreshMetrics(): Promise<void> {
@@ -527,19 +595,22 @@ async function unsubscribeFromPush(): Promise<void> {
   }
 }
 
-function offerServiceWorkerUpdate(worker: ServiceWorker): void {
-  waitingWorker = worker;
-  updateButton.hidden = false;
-  connectivity.textContent =
-    "A new version is ready. Update when convenient to use it.";
+function applyServiceWorkerUpdate(worker: ServiceWorker): void {
+  connectivity.textContent = "Updating to the latest version...";
   connectivity.hidden = false;
+  worker.postMessage({ type: "SKIP_WAITING" });
 }
 
+/**
+ * iOS home screen apps resume from the back/forward cache and often skip
+ * `visibilitychange`, so every plausible resume signal triggers a check. The
+ * checks are throttled because several of them fire together on one resume.
+ */
 function watchServiceWorkerRegistration(
   registration: ServiceWorkerRegistration,
 ): void {
   if (registration.waiting && navigator.serviceWorker.controller) {
-    offerServiceWorkerUpdate(registration.waiting);
+    applyServiceWorkerUpdate(registration.waiting);
   }
 
   registration.addEventListener("updatefound", () => {
@@ -552,23 +623,39 @@ function watchServiceWorkerRegistration(
         worker.state === "installed" &&
         navigator.serviceWorker.controller
       ) {
-        offerServiceWorkerUpdate(worker);
+        applyServiceWorkerUpdate(worker);
       }
     });
   });
 
-  window.addEventListener("online", () => void registration.update());
+  let lastUpdateCheck = Date.now();
+  const checkForUpdate = (): void => {
+    const now = Date.now();
+    if (!navigator.onLine || now - lastUpdateCheck < UPDATE_CHECK_THROTTLE_MS) {
+      return;
+    }
+    lastUpdateCheck = now;
+    void registration.update();
+  };
+
+  window.addEventListener("online", checkForUpdate);
+  window.addEventListener("pageshow", checkForUpdate);
+  window.addEventListener("focus", checkForUpdate);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && navigator.onLine) {
-      void registration.update();
+    if (document.visibilityState === "visible") {
+      checkForUpdate();
     }
   });
+  window.setInterval(checkForUpdate, UPDATE_CHECK_INTERVAL_MS);
 }
 
 async function registerServiceWorker(): Promise<void> {
   try {
-    const registration =
-      await navigator.serviceWorker.register("/service-worker.js");
+    const registration = await navigator.serviceWorker.register(
+      "/service-worker.js",
+      // Never let the HTTP cache answer the worker update check.
+      { updateViaCache: "none" },
+    );
     watchServiceWorkerRegistration(registration);
   } catch {
     connectivity.textContent =
@@ -615,10 +702,6 @@ installButton.addEventListener("click", async () => {
   installPrompt = undefined;
   installButton.hidden = true;
 });
-updateButton.addEventListener("click", () => {
-  updateButton.disabled = true;
-  waitingWorker?.postMessage({ type: "SKIP_WAITING" });
-});
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.addEventListener("message", (event) => {
@@ -629,7 +712,9 @@ if ("serviceWorker" in navigator) {
       displayMessage(
         event.data.message,
         typeof event.data.id === "string" ? event.data.id : undefined,
+        typeof event.data.sentAt === "number" ? event.data.sentAt : undefined,
       );
+      void refreshMetrics();
     }
   });
   navigator.serviceWorker.addEventListener("controllerchange", () => {
@@ -661,3 +746,4 @@ if ("Notification" in window) {
 
 void connect();
 void refreshMetrics();
+void loadNotificationHistory();

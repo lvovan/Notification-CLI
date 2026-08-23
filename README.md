@@ -29,7 +29,8 @@ All senders and receivers use the Web PubSub hub named `notifications`.
 - pnpm 10.34.5
 - An Azure Web PubSub resource
 - An Azure Static Web App
-- An Azure Storage account for the `PushSubscriptions` table
+- An Azure Storage account for the `PushSubscriptions`, `NotificationHistory`
+  and `NotificationMetrics` tables
 
 ## Build the CLI
 
@@ -108,12 +109,8 @@ set:
 | `NOTIFICATION_CLI_VAPID_PUBLIC_KEY` | Push only. URL-safe VAPID public key returned to authorized browsers |
 | `NOTIFICATION_CLI_VAPID_PRIVATE_KEY` | Push only. Secret VAPID private key used only by the API |
 | `NOTIFICATION_CLI_VAPID_SUBJECT` | Push only. VAPID contact URI, normally `mailto:you@example.com` |
-| `NOTIFICATION_CLI_STORAGE_CONNECTION_STRING` | Azure Storage connection string used for durable push subscriptions and notification metrics |
-
-> This setting was previously named
-> `NOTIFICATION_CLI_PUSH_STORAGE_CONNECTION_STRING`. Rename it in the Static
-> Web App configuration, otherwise background push and metrics both switch off
-> silently.
+| `NOTIFICATION_CLI_STORAGE_CONNECTION_STRING` | Azure Storage connection string used for durable push subscriptions, notification history and metrics |
+| `NOTIFICATION_CLI_RETENTION_DAYS` | Optional. Whole number of days notifications stay readable in the frontend. Defaults to `7`, maximum `365` |
 
 Real-time delivery through Web PubSub is the required core transport. The
 "push only" settings are an optional enhancement: when any of them is missing,
@@ -121,23 +118,6 @@ notifications are still delivered live to open pages and the response reports
 `"pushConfigured": false` instead of failing. Missing a **required** setting
 makes `/api/notify` answer `503` naming the exact variable, for example
 `{"error":"NOTIFICATION_CLI_API_KEY is not configured."}`.
-
-## Notification metrics
-
-Every notification accepted by Web PubSub is recorded in the
-`NotificationMetrics` table of the storage account, and the frontend shows how
-many were sent in the last 24 hours, 7 days and 30 days, along with the
-lifetime total.
-
-Each send writes one row partitioned by UTC day, so the windowed counts need a
-single range query over at most 31 day partitions. The lifetime total is a
-separate counter entity updated with an ETag precondition, which keeps it
-accurate under concurrent sends without ever scanning the whole table.
-
-Metrics are telemetry: if the storage account is unreachable the notification
-is still delivered, and the response reports the problem in `delivery.metricError`
-rather than failing. Rows older than 30 days are never queried, so they can be
-deleted at any time without affecting the total.
 
 Generate a VAPID key pair once and keep it stable. Rotating it requires clients
 to create a new browser subscription:
@@ -181,6 +161,85 @@ For local Functions development, copy
 browser endpoints also need a representative `x-ms-client-principal` header
 because authentication is normally injected by Static Web Apps. Do not commit that
 file.
+
+## Notification metrics
+
+Every notification accepted by Web PubSub is recorded in the
+`NotificationMetrics` table of the storage account, and the frontend shows how
+many were sent in the last 24 hours, 7 days and 30 days, along with the
+lifetime total.
+
+Each send writes one row partitioned by UTC day, so the windowed counts need a
+single range query over at most 31 day partitions. The lifetime total is a
+separate counter entity updated with an ETag precondition, which keeps it
+accurate under concurrent sends without ever scanning the whole table.
+
+Metrics are telemetry: if the storage account is unreachable the notification
+is still delivered, and the response reports the problem in `delivery.metricError`
+rather than failing. Rows older than 30 days are never queried, so they can be
+deleted at any time without affecting the total.
+
+## Notification history and retention
+
+Notifications stay readable in the frontend for a week by default, so a message
+dismissed too quickly can still be opened again. Set
+`NOTIFICATION_CLI_RETENTION_DAYS` to any whole number of days between `1` and
+`365` to change the window.
+
+Each notification is stored in the `NotificationHistory` table, partitioned by
+UTC day. `GET /api/notifications` returns the retained notifications
+newest-first together with the effective `retentionDays`. Like `/api/metrics`,
+it is gated by Microsoft account authentication and is never reachable with an
+API key.
+
+The sweep is lazy: every accepted send appends the new notification and then
+deletes the day partitions that have fallen outside the retention window, so no
+timer or extra Azure resource is needed. Retention is day-granular, which keeps
+listing and pruning in agreement about exactly which partitions survive.
+
+Metrics are deliberately kept in a separate table and are **not** affected by
+this deletion. The counts for the last 7 and 30 days, and the lifetime total,
+stay correct even when the notification bodies behind them have been swept
+away. Retention is best-effort in the same way metrics are: a storage failure
+is reported in `delivery.historyError` and never turns a delivered notification
+into a failure.
+
+The frontend's **Clear** button only hides messages in the current page.
+Retained notifications reappear after a reload until they age out.
+
+## Progressive Web App updates
+
+Installed home screen apps update themselves, with no user action and no
+"Update available" prompt.
+
+A service worker is only replaced when the browser sees that its **bytes**
+changed. Because `service-worker.js` is served verbatim from `apps/web/public`,
+every deployment used to ship a byte-identical worker, so the browser discarded
+it and installed apps stayed on their original version indefinitely. Content
+hashed asset filenames do not help: only the worker's own bytes are compared.
+
+The build therefore stamps a unique identity into the worker. `apps/web/vite.config.ts`
+replaces a `__BUILD_ID__` placeholder in `dist/service-worker.js` with the build
+timestamp and fails the build if the placeholder is missing. That identity also
+names the cache, so activating a new worker deletes every older
+`notification-cli-shell-*` cache.
+
+The rest of the flow makes sure a new worker is noticed and applied promptly:
+
+- the registration uses `updateViaCache: "none"`, so the update check is never
+  answered from the HTTP cache;
+- `staticwebapp.config.json` serves `/`, `/index.html` and `/service-worker.js`
+  with `Cache-Control: no-cache`;
+- the page checks for updates on `pageshow`, `focus`, `visibilitychange` and
+  `online`, plus hourly. iOS home screen apps resume from the back/forward cache
+  and frequently skip `visibilitychange`, so several triggers are needed. They
+  are throttled to one check per minute because a single resume fires more than
+  one of them;
+- a waiting worker is told to `SKIP_WAITING` immediately, and the page reloads
+  on `controllerchange`.
+
+The worker never caches its own script, which would otherwise let a stale copy
+shadow a freshly deployed one.
 
 ## Configure the MCP server
 

@@ -37,7 +37,9 @@ self.addEventListener("fetch", (event) => {
   if (
     url.origin !== self.location.origin ||
     url.pathname.startsWith("/api/") ||
-    url.pathname.startsWith("/.auth/")
+    url.pathname.startsWith("/.auth/") ||
+    // A cached worker script could shadow a newly deployed one.
+    url.pathname === "/service-worker.js"
   ) {
     return;
   }
@@ -71,8 +73,12 @@ self.addEventListener("notificationclick", (event) => {
   );
 });
 
+// Replaced with the build timestamp by the Vite build. A worker whose bytes
+// never change is discarded by browsers as "no update", so this value is what
+// makes a new deployment reach installed apps.
+const BUILD_ID = "__BUILD_ID__";
 const CACHE_PREFIX = "notification-cli-shell-";
-const CACHE_NAME = `${CACHE_PREFIX}v5`;
+const CACHE_NAME = `${CACHE_PREFIX}${BUILD_ID}`;
 const APP_SHELL = [
   "/manifest.webmanifest",
   "/icon.svg",
@@ -85,12 +91,15 @@ const CACHEABLE_ASSET = /\.(?:css|js|mjs|json|webmanifest|png|svg|ico|woff2?)$/;
 
 /**
  * Authentication endpoints must never be fetched or cached by the worker:
- * requesting /.auth/logout during install would sign the user out.
+ * requesting /.auth/logout during install would sign the user out. The worker
+ * script itself is excluded so a cached copy can never shadow a new
+ * deployment.
  */
 function isCacheableAssetPath(pathname) {
   return (
     !pathname.startsWith("/.auth/") &&
     !pathname.startsWith("/api/") &&
+    pathname !== "/service-worker.js" &&
     CACHEABLE_ASSET.test(pathname)
   );
 }
@@ -101,6 +110,7 @@ function parsePushNotification(data) {
     title: "Notification CLI",
     body: "New notification",
     tag: `push-${Date.now()}`,
+    sentAt: Date.now(),
   };
   if (!data) {
     return defaults;
@@ -131,6 +141,8 @@ function parsePushNotification(data) {
           typeof payload.tag === "string" && payload.tag
             ? payload.tag
             : defaults.tag,
+        sentAt:
+          typeof payload.sentAt === "number" ? payload.sentAt : defaults.sentAt,
       };
     }
   } catch {
@@ -156,6 +168,7 @@ async function showBackgroundNotification(notification) {
         type: "PUSH_NOTIFICATION",
         id: notification.id,
         message: notification.body,
+        sentAt: notification.sentAt,
       });
     }
     return;
