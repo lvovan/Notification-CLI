@@ -201,8 +201,10 @@ storing the answer in its secret storage. Add to `.vscode/mcp.json`:
 
 ### GitHub Copilot CLI
 
-The Copilot CLI does not support `inputs`, so the secret comes from an
-environment variable expanded with `${env:...}`. Add to
+The Copilot CLI does not support `inputs`. It expands `${VARNAME}` (and
+`$VARNAME`) in header values from the environment that launched `copilot`.
+The `${env:VARNAME}` form used by VS Code is **not** recognized and is sent
+verbatim, which the server rejects with `401`. Add to
 `~/.copilot/mcp-config.json`:
 
 ```json
@@ -213,7 +215,7 @@ environment variable expanded with `${env:...}`. Add to
       "tools": ["*"],
       "url": "https://<your-static-web-app>.azurestaticapps.net/api/mcp",
       "headers": {
-        "x-api-key": "${env:NOTIFICATION_CLI_MCP_API_KEY}"
+        "x-api-key": "${NOTIFICATION_CLI_MCP_API_KEY}"
       }
     }
   }
@@ -234,6 +236,11 @@ The server implements stateless Streamable HTTP JSON-RPC and exposes
 1,000 characters.
 
 ### Troubleshooting
+
+`Authentication failed: MCPOAuthError` means the client received a `401` and
+fell back to OAuth. This server uses no OAuth, so the real cause is a missing
+or unexpanded `x-api-key` header — check the placeholder syntax and that the
+variable is set in the shell that started the client.
 
 MCP clients probe `/.well-known/oauth-authorization-server/...` and
 `/.well-known/oauth-protected-resource/...` before falling back to static
