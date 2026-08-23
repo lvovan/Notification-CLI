@@ -19,6 +19,7 @@ const METRIC_WINDOWS = [
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 /** One resume can fire pageshow, focus and visibilitychange together. */
 const UPDATE_CHECK_THROTTLE_MS = 60 * 1000;
+const NOTIFICATION_HISTORY_PAGE_SIZE = 5;
 
 type NotificationCounts = Record<(typeof METRIC_WINDOWS)[number], number>;
 
@@ -49,7 +50,7 @@ const toggleNotifications = requiredElement<HTMLButtonElement>(
 const pushStatus = requiredElement("push-status");
 const metricsStatus = requiredElement("metrics-status");
 const messagesStatus = requiredElement("messages-status");
-const clearButton = requiredElement<HTMLButtonElement>("clear");
+const messageListSentinel = requiredElement("message-list-sentinel");
 const statusCard = requiredElement<HTMLElement>("status").closest(
   ".status-card",
 );
@@ -76,6 +77,9 @@ let deliberatelyClosed = false;
 let installPrompt: BeforeInstallPromptEvent | undefined;
 let refreshing = false;
 let pushBusy = false;
+let notificationHistoryCursor: string | null | undefined;
+let notificationHistoryLoading = false;
+let notificationHistoryObserver: IntersectionObserver | undefined;
 const displayedNotificationIds = new Set<string>();
 
 function createActionButton(label: string, id: string): HTMLButtonElement {
@@ -245,9 +249,79 @@ function displayMessage(
   messageList.insertBefore(item, older ?? null);
 }
 
+/** Carries the HTTP status so expired sessions can offer a sign-in link. */
+class SessionAwareError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+function setHistoryStatus(retentionDays: number | undefined): void {
+  messagesStatus.textContent =
+    typeof retentionDays === "number"
+      ? `Notifications are kept for ${retentionDays} day${
+          retentionDays === 1 ? "" : "s"
+        }.`
+      : "";
+  messagesStatus.classList.remove("error");
+}
+
+function setHistoryError(error: unknown, isFirstPage: boolean): void {
+  const detail = error instanceof Error ? error.message : "Unknown error";
+  const subject = isFirstPage ? "notifications" : "earlier notifications";
+  messagesStatus.replaceChildren(`Unable to load ${subject}: ${detail} `);
+  messagesStatus.classList.add("error");
+  if (
+    error instanceof SessionAwareError &&
+    (error.status === 401 || error.status === 403)
+  ) {
+    const signIn = document.createElement("a");
+    signIn.href = "/.auth/login/aad?post_login_redirect_uri=/";
+    signIn.textContent = "Sign in again";
+    messagesStatus.append(signIn);
+    return;
+  }
+
+  const retry = createActionButton("Retry", "retry-notification-history");
+  retry.addEventListener("click", () => void loadNotificationHistory());
+  messagesStatus.append(retry);
+}
+
+function stopNotificationHistoryPaging(): void {
+  notificationHistoryCursor = null;
+  notificationHistoryObserver?.disconnect();
+  notificationHistoryObserver = undefined;
+}
+
+function isHistorySentinelNearViewport(): boolean {
+  return (
+    messageListSentinel.getBoundingClientRect().top <= window.innerHeight + 160
+  );
+}
+
 async function loadNotificationHistory(): Promise<void> {
+  if (notificationHistoryLoading || notificationHistoryCursor === null) {
+    return;
+  }
+
+  notificationHistoryLoading = true;
+  const isFirstPage = notificationHistoryCursor === undefined;
+  messagesStatus.textContent = isFirstPage
+    ? "Loading notifications..."
+    : "Loading earlier notifications...";
+  messagesStatus.classList.remove("error");
+  let shouldLoadNextPage = false;
+
   try {
-    const response = await fetch("/api/notifications", {
+    const cursor = notificationHistoryCursor;
+    const query = new URLSearchParams({
+      limit: String(NOTIFICATION_HISTORY_PAGE_SIZE),
+      ...(cursor !== undefined ? { before: cursor } : {}),
+    });
+    const response = await fetch(`/api/notifications?${query}`, {
       credentials: "same-origin",
       headers: { Accept: "application/json" },
       cache: "no-store",
@@ -255,13 +329,15 @@ async function loadNotificationHistory(): Promise<void> {
     const body = (await response.json()) as {
       retentionDays?: number;
       notifications?: RetainedNotification[];
+      nextCursor?: string | null;
       error?: unknown;
     };
     if (!response.ok) {
-      throw new Error(
+      throw new SessionAwareError(
         typeof body.error === "string"
           ? body.error
           : `history request failed (${response.status})`,
+        response.status,
       );
     }
     for (const entry of body.notifications ?? []) {
@@ -269,19 +345,35 @@ async function loadNotificationHistory(): Promise<void> {
         displayMessage(entry.body, entry.id, entry.sentAt);
       }
     }
-    messagesStatus.textContent =
-      typeof body.retentionDays === "number"
-        ? `Notifications are kept for ${body.retentionDays} day${
-            body.retentionDays === 1 ? "" : "s"
-          }.`
-        : "";
-    messagesStatus.classList.remove("error");
+    notificationHistoryCursor =
+      typeof body.nextCursor === "string" ? body.nextCursor : null;
+    setHistoryStatus(body.retentionDays);
+    if (notificationHistoryCursor === null) {
+      stopNotificationHistoryPaging();
+    } else {
+      shouldLoadNextPage = isHistorySentinelNearViewport();
+    }
   } catch (error) {
-    messagesStatus.textContent = `Unable to load earlier notifications: ${
-      error instanceof Error ? error.message : "Unknown error"
-    }`;
-    messagesStatus.classList.add("error");
+    setHistoryError(error, isFirstPage);
+  } finally {
+    notificationHistoryLoading = false;
   }
+
+  if (shouldLoadNextPage) {
+    void loadNotificationHistory();
+  }
+}
+
+function watchNotificationHistoryPaging(): void {
+  notificationHistoryObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        void loadNotificationHistory();
+      }
+    },
+    { rootMargin: "160px 0px" },
+  );
+  notificationHistoryObserver.observe(messageListSentinel);
 }
 
 /**
@@ -382,16 +474,6 @@ function setPushEnabled(enabled: boolean): void {
 function setPushStatus(message: string, isError = false): void {
   pushStatus.textContent = message;
   pushStatus.classList.toggle("error", isError);
-}
-
-/** Carries the HTTP status so expired sessions can offer a sign-in link. */
-class SessionAwareError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-  }
 }
 
 function setPushError(context: string, error: unknown): void {
@@ -663,9 +745,6 @@ async function registerServiceWorker(): Promise<void> {
   }
 }
 
-clearButton.addEventListener("click", () => {
-  messageList.replaceChildren(emptyState);
-});
 toggleNotifications.addEventListener("click", () => {
   void (toggleNotifications.getAttribute("aria-pressed") === "true"
     ? disablePushNotifications()
@@ -740,4 +819,5 @@ if ("Notification" in window) {
 
 void connect();
 void refreshMetrics();
+watchNotificationHistoryPaging();
 void loadNotificationHistory();

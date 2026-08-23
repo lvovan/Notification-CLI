@@ -114,7 +114,6 @@
       <section class="messages" aria-labelledby="messages-title">
         <div class="section-heading">
           <h2 id="messages-title">Messages</h2>
-          <button id="clear" class="quiet-button" type="button">Clear</button>
         </div>
         <ol id="message-list">
           <li id="empty-state" class="empty-state">
@@ -122,6 +121,7 @@
             New notifications will appear here.
           </li>
         </ol>
+        <div id="message-list-sentinel" aria-hidden="true"></div>
         <p
           id="messages-status"
           class="push-status"

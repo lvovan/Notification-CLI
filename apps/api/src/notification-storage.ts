@@ -12,8 +12,9 @@ import {
 export const NOTIFICATION_HISTORY_TABLE = "NotificationHistory";
 export const RETENTION_DAYS_ENV = "NOTIFICATION_CLI_RETENTION_DAYS";
 export const DEFAULT_RETENTION_DAYS = 7;
+export const DEFAULT_NOTIFICATION_PAGE_LIMIT = 5;
+export const MAX_NOTIFICATION_PAGE_LIMIT = 50;
 const MAX_RETENTION_DAYS = 365;
-const MAX_LISTED_NOTIFICATIONS = 200;
 const DELETE_CONCURRENCY = 20;
 
 export interface StoredNotification {
@@ -23,11 +24,32 @@ export interface StoredNotification {
   sentAt: number;
 }
 
+export interface NotificationPage {
+  notifications: StoredNotification[];
+  nextCursor: string | null;
+}
+
+export interface NotificationListOptions {
+  limit?: number;
+  cursor?: string;
+}
+
 export interface NotificationHistoryStore {
   append(notification: StoredNotification): Promise<void>;
-  list(now: Date, retentionDays: number): Promise<StoredNotification[]>;
+  list(
+    now: Date,
+    retentionDays: number,
+    options?: NotificationListOptions,
+  ): Promise<NotificationPage>;
   prune(now: Date, retentionDays: number): Promise<number>;
 }
+
+interface ParsedNotificationCursor {
+  sentAt: number;
+  id: string;
+}
+
+export class NotificationCursorError extends Error {}
 
 export function parseRetentionDays(value: string | undefined): number {
   const raw = value?.trim();
@@ -52,6 +74,54 @@ export function retentionCutoffDay(now: Date, retentionDays: number): string {
   return dayKey(new Date(now.getTime() - retentionDays * DAY_MS));
 }
 
+export function notificationCursor(notification: StoredNotification): string {
+  return `${notification.sentAt}:${notification.id}`;
+}
+
+export function parseNotificationCursor(value: string): ParsedNotificationCursor {
+  const match = /^(0|[1-9]\d*):([^:\s]+)$/.exec(value);
+  if (!match) {
+    throw new NotificationCursorError("before cursor is malformed.");
+  }
+  const sentAt = Number(match[1]);
+  if (!Number.isSafeInteger(sentAt) || Number.isNaN(new Date(sentAt).getTime())) {
+    throw new NotificationCursorError("before cursor timestamp is invalid.");
+  }
+  const id = match[2];
+  if (id === undefined) {
+    throw new NotificationCursorError("before cursor is malformed.");
+  }
+  return { sentAt, id };
+}
+
+function previousDayKey(value: string): string {
+  return dayKey(new Date(Date.parse(`${value}T00:00:00.000Z`) - DAY_MS));
+}
+
+function compareNewestFirst(
+  left: StoredNotification,
+  right: StoredNotification,
+): number {
+  const sentAtOrder = right.sentAt - left.sentAt;
+  if (sentAtOrder !== 0) {
+    return sentAtOrder;
+  }
+  if (left.id === right.id) {
+    return 0;
+  }
+  return left.id > right.id ? -1 : 1;
+}
+
+function isOlderThanCursor(
+  notification: StoredNotification,
+  cursor: ParsedNotificationCursor,
+): boolean {
+  return (
+    notification.sentAt < cursor.sentAt ||
+    (notification.sentAt === cursor.sentAt && notification.id < cursor.id)
+  );
+}
+
 export class AzureTableNotificationHistoryStore
   implements NotificationHistoryStore
 {
@@ -72,29 +142,63 @@ export class AzureTableNotificationHistoryStore
   async list(
     now: Date,
     retentionDays: number,
-  ): Promise<StoredNotification[]> {
+    options: NotificationListOptions = {},
+  ): Promise<NotificationPage> {
     await ensureTable(this.client);
-    const filter = odata`PartitionKey ge ${retentionCutoffDay(now, retentionDays)}`;
-    const notifications: StoredNotification[] = [];
-    const entities = this.client.listEntities<Partial<StoredNotification>>({
-      queryOptions: { filter, select: ["id", "title", "body", "sentAt"] },
-    });
-    for await (const entity of entities) {
-      if (
-        typeof entity.id === "string" &&
-        typeof entity.body === "string" &&
-        typeof entity.sentAt === "number"
-      ) {
-        notifications.push({
-          id: entity.id,
-          title: entity.title ?? "Notification CLI",
-          body: entity.body,
-          sentAt: entity.sentAt,
-        });
-      }
+    const limit = options.limit ?? DEFAULT_NOTIFICATION_PAGE_LIMIT;
+    const cursor =
+      options.cursor === undefined ? undefined : parseNotificationCursor(options.cursor);
+    const cutoffDay = retentionCutoffDay(now, retentionDays);
+    const newestDay = dayKey(now);
+    let partition = cursor ? dayKey(new Date(cursor.sentAt)) : dayKey(now);
+    if (partition > newestDay) {
+      partition = newestDay;
     }
-    notifications.sort((left, right) => right.sentAt - left.sentAt);
-    return notifications.slice(0, MAX_LISTED_NOTIFICATIONS);
+    const page: StoredNotification[] = [];
+
+    while (partition >= cutoffDay && page.length <= limit) {
+      const filter = odata`PartitionKey eq ${partition}`;
+      const partitionNotifications: StoredNotification[] = [];
+      const entities = this.client.listEntities<Partial<StoredNotification>>({
+        queryOptions: { filter, select: ["id", "title", "body", "sentAt"] },
+      });
+      for await (const entity of entities) {
+        if (
+          typeof entity.id === "string" &&
+          typeof entity.body === "string" &&
+          typeof entity.sentAt === "number"
+        ) {
+          partitionNotifications.push({
+            id: entity.id,
+            title: entity.title ?? "Notification CLI",
+            body: entity.body,
+            sentAt: entity.sentAt,
+          });
+        }
+      }
+
+      partitionNotifications.sort(compareNewestFirst);
+      for (const notification of partitionNotifications) {
+        if (cursor && !isOlderThanCursor(notification, cursor)) {
+          continue;
+        }
+        page.push(notification);
+        if (page.length > limit) {
+          break;
+        }
+      }
+
+      partition = previousDayKey(partition);
+    }
+
+    const notifications = page.slice(0, limit);
+    return {
+      notifications,
+      nextCursor:
+        page.length > limit && notifications.length > 0
+          ? notificationCursor(notifications[notifications.length - 1]!)
+          : null,
+    };
   }
 
   async prune(now: Date, retentionDays: number): Promise<number> {

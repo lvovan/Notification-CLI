@@ -260,10 +260,41 @@ dismissed too quickly can still be opened again. Set
 `365` to change the window.
 
 Each notification is stored in the `NotificationHistory` table, partitioned by
-UTC day. `GET /api/notifications` returns the retained notifications
-newest-first together with the effective `retentionDays`. Like `/api/metrics`,
-it is gated by Microsoft account authentication and is never reachable with an
-API key.
+UTC day. `GET /api/notifications?limit=<n>&before=<cursor>` returns one page
+of retained notifications together with the effective `retentionDays`.
+Notifications are newest-first, and `nextCursor` is `null` on the last page.
+`limit` is optional, defaults to `5`, and is capped at `50`; invalid values
+return `400`. `before` is an optional opaque cursor returned as `nextCursor`.
+Clients pass it back unchanged to request notifications strictly older than
+that position, and malformed cursors return `400`. Like `/api/metrics`, the
+endpoint is gated by Microsoft account authentication and is never reachable
+with an API key.
+
+The successful response keeps the same envelope on every page:
+
+```json
+{
+  "retentionDays": 7,
+  "notifications": [
+    { "id": "...", "title": "...", "body": "...", "sentAt": 1700000000000 }
+  ],
+  "nextCursor": "<opaque string>"
+}
+```
+
+Paging keeps the endpoint bounded. Returning the whole retention window in one
+response would make each request slower and more memory-hungry as history
+grows. Azure Table Storage can efficiently read rows inside known partition and
+key ranges, but it cannot sort the full table descending on the server. Because
+history rows are partitioned by UTC day, the API walks day partitions from
+newest to oldest and stops as soon as it has filled the requested page. That
+shape matches the storage layout and avoids loading the whole window into
+memory.
+
+The frontend initially loads the five newest notifications. An
+IntersectionObserver sentinel at the bottom of the list asks for older pages as
+the user scrolls, so the page can expose retained history without rendering the
+whole retention window at once.
 
 The sweep is lazy: every accepted send appends the new notification and then
 deletes the day partitions that have fallen outside the retention window, so no
@@ -276,9 +307,6 @@ stay correct even when the notification bodies behind them have been swept
 away. Retention is best-effort in the same way metrics are: a storage failure
 is reported in `delivery.historyError` and never turns a delivered notification
 into a failure.
-
-The frontend's **Clear** button only hides messages in the current page.
-Retained notifications reappear after a reload until they age out.
 
 ## Progressive Web App updates
 

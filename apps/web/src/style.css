@@ -96,7 +96,7 @@ header {
 
 .account-email {
   color: var(--cp-text-muted);
-  font-size: 0.75rem;
+  font-size: 0.68rem;
   text-align: right;
   overflow-wrap: anywhere;
 }
@@ -339,17 +339,6 @@ h2 {
   font-size: 1rem;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-}
-
-.quiet-button {
-  border: 0;
-  color: var(--cp-text-muted);
-  background: var(--cp-surface);
-  cursor: pointer;
-}
-
-.quiet-button:hover {
-  color: var(--cp-text);
 }
 
 ol {
