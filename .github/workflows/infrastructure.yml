@@ -1,0 +1,155 @@
+name: Provision Notification CLI infrastructure
+
+# Manual runs only. Infrastructure changes are rare and create billable
+# resources, so this workflow is never triggered by a push.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "what-if previews the changes, deploy applies them"
+        type: choice
+        options:
+          - what-if
+          - deploy
+        default: what-if
+      resource_group:
+        description: "Resource group. Created automatically in deploy mode."
+        type: string
+        default: notification-cli
+      location:
+        description: "Region. Limited to where the Static Web Apps Free tier exists."
+        type: choice
+        options:
+          - westeurope
+          - westus2
+          - centralus
+          - eastus2
+          - eastasia
+        default: westeurope
+      name_prefix:
+        description: "Prefix for the generated resource names"
+        type: string
+        default: notification-cli
+      custom_domain:
+        description: "Optional custom domain. Its DNS record must already point at the Static Web App."
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+# Two deployments touching the same resources would race.
+concurrency:
+  group: notification-cli-infrastructure
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate template
+        run: az bicep build --file infra/main.bicep --stdout > /dev/null
+
+      - name: Sign in to Azure
+        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Only in deploy mode: a preview must not change anything, so what-if
+      # requires the group to exist already.
+      - name: Ensure resource group
+        if: inputs.mode == 'deploy'
+        run: |
+          az group create \
+            --name "${{ inputs.resource_group }}" \
+            --location "${{ inputs.location }}" \
+            --output none
+
+      - name: Preview changes
+        if: inputs.mode == 'what-if'
+        env:
+          NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_CLI_API_KEY }}
+          MCP_API_KEY: ${{ secrets.NOTIFICATION_CLI_MCP_API_KEY }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ vars.VAPID_SUBJECT }}
+          AUTHORIZED_USERS: ${{ vars.AUTHORIZED_USERS }}
+          RETENTION_DAYS: ${{ vars.NOTIFICATION_CLI_RETENTION_DAYS || '7' }}
+        run: |
+          az deployment group what-if \
+            --resource-group "${{ inputs.resource_group }}" \
+            --template-file infra/main.bicep \
+            --parameters \
+              namePrefix="${{ inputs.name_prefix }}" \
+              location="${{ inputs.location }}" \
+              customDomain="${{ inputs.custom_domain }}" \
+              authorizedUsers="$AUTHORIZED_USERS" \
+              notificationApiKey="$NOTIFICATION_API_KEY" \
+              mcpApiKey="$MCP_API_KEY" \
+              vapidPublicKey="$VAPID_PUBLIC_KEY" \
+              vapidPrivateKey="$VAPID_PRIVATE_KEY" \
+              vapidSubject="$VAPID_SUBJECT" \
+              retentionDays="$RETENTION_DAYS"
+
+      - name: Deploy infrastructure
+        id: deploy
+        if: inputs.mode == 'deploy'
+        env:
+          NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_CLI_API_KEY }}
+          MCP_API_KEY: ${{ secrets.NOTIFICATION_CLI_MCP_API_KEY }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ vars.VAPID_SUBJECT }}
+          AUTHORIZED_USERS: ${{ vars.AUTHORIZED_USERS }}
+          RETENTION_DAYS: ${{ vars.NOTIFICATION_CLI_RETENTION_DAYS || '7' }}
+        run: |
+          outputs=$(az deployment group create \
+            --name "notification-cli-${{ github.run_id }}" \
+            --resource-group "${{ inputs.resource_group }}" \
+            --template-file infra/main.bicep \
+            --parameters \
+              namePrefix="${{ inputs.name_prefix }}" \
+              location="${{ inputs.location }}" \
+              customDomain="${{ inputs.custom_domain }}" \
+              authorizedUsers="$AUTHORIZED_USERS" \
+              notificationApiKey="$NOTIFICATION_API_KEY" \
+              mcpApiKey="$MCP_API_KEY" \
+              vapidPublicKey="$VAPID_PUBLIC_KEY" \
+              vapidPrivateKey="$VAPID_PRIVATE_KEY" \
+              vapidSubject="$VAPID_SUBJECT" \
+              retentionDays="$RETENTION_DAYS" \
+            --query properties.outputs \
+            --output json)
+          echo "hostname=$(echo "$outputs" | jq -r .staticWebAppHostname.value)" >> "$GITHUB_OUTPUT"
+          echo "swa_name=$(echo "$outputs" | jq -r .staticWebAppName.value)" >> "$GITHUB_OUTPUT"
+          echo "push_configured=$(echo "$outputs" | jq -r .pushConfigured.value)" >> "$GITHUB_OUTPUT"
+
+      # The deployment token is deliberately not printed. Read it separately and
+      # store it as the AZURE_STATIC_WEB_APPS_API_TOKEN secret.
+      - name: Summarize deployment
+        if: inputs.mode == 'deploy'
+        env:
+          HOSTNAME: ${{ steps.deploy.outputs.hostname }}
+          SWA_NAME: ${{ steps.deploy.outputs.swa_name }}
+          PUSH_CONFIGURED: ${{ steps.deploy.outputs.push_configured }}
+        run: |
+          {
+            echo "## Infrastructure deployed"
+            echo ""
+            echo "- Static Web App: \`$SWA_NAME\`"
+            echo "- Hostname: https://$HOSTNAME"
+            echo "- Web Push configured: \`$PUSH_CONFIGURED\`"
+            echo ""
+            echo "Refresh the deployment token secret, then run the deploy workflow:"
+            echo ""
+            echo '```'
+            echo "az staticwebapp secrets list --name $SWA_NAME \\"
+            echo "  --query properties.apiKey --output tsv"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

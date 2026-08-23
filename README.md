@@ -18,6 +18,7 @@ browser.
 | `apps/cli` | Go | Sends notifications through the secured SWA fan-out API |
 | `apps/web` | TypeScript and Vite | Installable PWA with live and background notifications |
 | `apps/api` | TypeScript and Azure Functions | Authenticates users, stores subscriptions, fans out messages, and hosts MCP |
+| `infra` | Bicep | Declares the Azure resources and the Static Web App settings |
 | `installer` | WiX Toolset | Builds the Windows x64 MSI |
 
 All senders and receivers use the Web PubSub hub named `notifications`.
@@ -27,10 +28,9 @@ All senders and receivers use the Web PubSub hub named `notifications`.
 - Go 1.24 or newer
 - Node.js 22
 - pnpm 10.34.5
-- An Azure Web PubSub resource
-- An Azure Static Web App
-- An Azure Storage account for the `PushSubscriptions`, `NotificationHistory`
-  and `NotificationMetrics` tables
+- An Azure subscription. `infra\main.bicep` creates the Web PubSub instance,
+  the Static Web App and the storage account holding the `PushSubscriptions`,
+  `NotificationHistory` and `NotificationMetrics` tables.
 
 ## Build the CLI
 
@@ -95,10 +95,83 @@ Deployable frontend and API artifacts are written to `dist\web` and
 Functions runtime as `node:22`, which is required when `skip_api_build` is
 enabled.
 
+## Provision Azure resources
+
+`infra\main.bicep` declares the whole solution on free tiers: a Web PubSub
+instance (`Free_F1`), a `Standard_LRS` storage account with the three tables,
+and a Free-tier Static Web App. It also writes the Static Web App's
+environment variables, deriving the Web PubSub and storage connection strings
+from the resources it just created, so neither is ever copied by hand.
+
+The template does not deploy application code. Provision first, then run the
+deploy workflow.
+
+### Run it from GitHub Actions
+
+**Provision Notification CLI infrastructure** is manual-only, because
+infrastructure changes are rare and create billable resources. Start it from
+the Actions tab and choose:
+
+| Input | Meaning |
+| --- | --- |
+| `mode` | `what-if` prints the changes without applying them, `deploy` applies them |
+| `resource_group` | Target resource group. Created automatically in `deploy` mode |
+| `location` | One of the five regions offering the Static Web Apps Free tier |
+| `name_prefix` | Prefix for the generated resource names |
+| `custom_domain` | Optional. The DNS record must already resolve to the Static Web App |
+
+`what-if` requires the resource group to exist, because a preview must not
+change anything. Run `deploy` first, or create the group by hand.
+
+The workflow signs in with OpenID Connect, so no publishing profile or client
+secret is stored. Register a federated credential on an app registration with
+the Contributor role over the resource group, then set:
+
+| Repository secret | Purpose |
+| --- | --- |
+| `AZURE_CLIENT_ID` | Application (client) ID of the app registration |
+| `AZURE_TENANT_ID` | Directory (tenant) ID |
+| `AZURE_SUBSCRIPTION_ID` | Target subscription |
+| `NOTIFICATION_CLI_API_KEY` | Key the CLI presents to `/api/notify` |
+| `NOTIFICATION_CLI_MCP_API_KEY` | Separate key the MCP client presents to `/api/mcp` |
+| `VAPID_PUBLIC_KEY` | Web Push public key. Leave unset to deploy without push |
+| `VAPID_PRIVATE_KEY` | Web Push private key |
+
+| Repository variable | Purpose |
+| --- | --- |
+| `AUTHORIZED_USERS` | Semicolon-separated Microsoft account email addresses |
+| `VAPID_SUBJECT` | Contact URI such as `mailto:you@example.com` |
+| `NOTIFICATION_CLI_RETENTION_DAYS` | Optional. Defaults to `7` |
+
+Deployment tokens are never printed. After a successful `deploy`, the run
+summary shows the command that reads the token so it can be stored as the
+`AZURE_STATIC_WEB_APPS_API_TOKEN` secret used by the deploy workflow:
+
+```powershell
+az staticwebapp secrets list --name notification-cli-swa `
+  --query properties.apiKey --output tsv
+```
+
+### Run it locally
+
+```powershell
+az deployment group create `
+  --resource-group notification-cli `
+  --template-file infra\main.bicep `
+  --parameters authorizedUsers="you@example.com" `
+               notificationApiKey=$env:NOTIFICATION_CLI_API_KEY `
+               mcpApiKey=$env:NOTIFICATION_CLI_MCP_API_KEY
+```
+
+Because the settings resource replaces the entire collection, a setting added
+by hand in the portal disappears on the next deployment. Add new settings to
+the template instead.
+
 ## Configure Azure
 
-In the Azure portal, open the Static Web App's **Environment variables** and
-set:
+The Bicep template above sets every value in this table. Use the Static Web
+App's **Environment variables** blade to inspect them, or to configure a
+manually created instance:
 
 | Variable | Purpose |
 | --- | --- |
@@ -360,10 +433,12 @@ wix build -arch x64 `
 
 ## Deploy
 
-Add the Static Web App deployment token to the GitHub repository as the
-`AZURE_STATIC_WEB_APPS_API_TOKEN` Actions secret. The workflow in
-`.github\workflows\deploy.yml` tests and builds the CLI installer, checks and
-packages the web application, and deploys the frontend and API.
+Provision the infrastructure first, then add the Static Web App deployment
+token to the GitHub repository as the `AZURE_STATIC_WEB_APPS_API_TOKEN` Actions
+secret. The workflow in `.github\workflows\deploy.yml` tests and builds the CLI
+installer, checks and packages the web application, and deploys the frontend
+and API. Unlike the infrastructure workflow it also runs on every push to
+`main`.
 
 ## Security
 
@@ -382,6 +457,9 @@ packages the web application, and deploys the frontend and API.
 - All `/api/*` routes intentionally remain anonymous at the Static Web Apps
   routing layer. Each handler fails closed unless its endpoint-specific API key
   or authorized browser principal is valid.
+- The infrastructure workflow authenticates with OpenID Connect, so no Azure
+  credential is stored in the repository, and it never prints the Static Web
+  App deployment token.
 
 ## License
 
