@@ -8,6 +8,7 @@ interface Route {
   route: string;
   methods?: string[];
   allowedRoles: string[];
+  statusCode?: number;
 }
 
 test("SWA routes leave APIs to endpoint security and protect only the frontend", async () => {
@@ -19,6 +20,7 @@ test("SWA routes leave APIs to endpoint security and protect only the frontend",
   ) as {
     platform: { apiRuntime: string };
     routes: Route[];
+    navigationFallback: { exclude: string[] };
   };
 
   assert.equal(config.platform.apiRuntime, "node:22");
@@ -39,6 +41,36 @@ test("SWA routes leave APIs to endpoint security and protect only the frontend",
     config.routes.findIndex((candidate) => candidate.route === "/api/*") <
       catchAllIndex,
   );
+});
+
+test("OAuth discovery probes get a clean 404 instead of a sign-in redirect", async () => {
+  const config = JSON.parse(
+    await readFile(
+      resolve("../web/public/staticwebapp.config.json"),
+      "utf8",
+    ),
+  ) as {
+    routes: Route[];
+    navigationFallback: { exclude: string[] };
+  };
+
+  // MCP clients probe /.well-known/oauth-* before using static credentials.
+  // Letting the authenticated catch-all answer redirects them to the Microsoft
+  // sign-in page, whose HTML they cannot parse as a discovery document.
+  assert.deepEqual(
+    config.routes.find((candidate) => candidate.route === "/.well-known/*"),
+    {
+      route: "/.well-known/*",
+      allowedRoles: ["anonymous"],
+      statusCode: 404,
+    },
+  );
+  assert.ok(
+    config.routes.findIndex(
+      (candidate) => candidate.route === "/.well-known/*",
+    ) < config.routes.findIndex((candidate) => candidate.route === "/*"),
+  );
+  assert.ok(config.navigationFallback.exclude.includes("/.well-known/*"));
 });
 
 test("CSP permits the mandatory inline theme bootstrap by hash", async () => {

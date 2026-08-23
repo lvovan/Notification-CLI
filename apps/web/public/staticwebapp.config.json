@@ -12,6 +12,11 @@
       "allowedRoles": ["anonymous"]
     },
     {
+      "route": "/.well-known/*",
+      "allowedRoles": ["anonymous"],
+      "statusCode": 404
+    },
+    {
       "route": "/*",
       "allowedRoles": ["authenticated"]
     }
@@ -24,7 +29,11 @@
   },
   "navigationFallback": {
     "rewrite": "/index.html",
-    "exclude": ["/api/*", "/*.{css,ico,js,json,png,svg,webmanifest}"]
+    "exclude": [
+      "/api/*",
+      "/.well-known/*",
+      "/*.{css,ico,js,json,png,svg,webmanifest}"
+    ]
   },
   "globalHeaders": {
     "Content-Security-Policy": "default-src 'self'; connect-src 'self' https: wss:; img-src 'self' data:; style-src 'self'; script-src 'self' 'sha256-HNjOU2rt1GsFc5zDEQXklLEbjDyKexAo5wKONo5tkTc='; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",

@@ -168,9 +168,14 @@ The MCP endpoint is:
 https://<your-static-web-app>.azurestaticapps.net/api/mcp
 ```
 
-It accepts either the HTTP Bearer authorization scheme or an
-`x-api-key: <key>` header. A
-GitHub Copilot MCP configuration using the dedicated API-key header looks like:
+It authenticates with an `x-api-key: <key>` header carrying
+`NOTIFICATION_CLI_MCP_API_KEY`. The two clients differ in how they supply that
+secret, so use the matching example below.
+
+### VS Code
+
+VS Code resolves `${input:...}` placeholders and prompts once per workspace,
+storing the answer in its secret storage. Add to `.vscode/mcp.json`:
 
 ```json
 {
@@ -194,9 +199,57 @@ GitHub Copilot MCP configuration using the dedicated API-key header looks like:
 }
 ```
 
+### GitHub Copilot CLI
+
+The Copilot CLI does not support `inputs`, so the secret comes from an
+environment variable expanded with `${env:...}`. Add to
+`~/.copilot/mcp-config.json`:
+
+```json
+{
+  "mcpServers": {
+    "notification-cli": {
+      "type": "http",
+      "tools": ["*"],
+      "url": "https://<your-static-web-app>.azurestaticapps.net/api/mcp",
+      "headers": {
+        "x-api-key": "${env:NOTIFICATION_CLI_MCP_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+`NOTIFICATION_CLI_MCP_API_KEY` must be set in the environment that launches
+`copilot`, otherwise the header is sent empty and the server answers `401`.
+Persist it for future sessions with:
+
+```powershell
+[Environment]::SetEnvironmentVariable(
+  "NOTIFICATION_CLI_MCP_API_KEY", "<key>", "User")
+```
+
 The server implements stateless Streamable HTTP JSON-RPC and exposes
 `send_notification`. The tool accepts a required `message` string of up to
 1,000 characters.
+
+### Troubleshooting
+
+MCP clients probe `/.well-known/oauth-authorization-server/...` and
+`/.well-known/oauth-protected-resource/...` before falling back to static
+credentials. This server does not use OAuth, so those paths are routed to a
+plain `404`. They must never reach the authenticated catch-all route, which
+would answer with a redirect to the Microsoft sign-in page and fail the client
+with `OAuth discovery failed: Failed to parse discovery document`.
+
+Verify the endpoint without sending a notification:
+
+```powershell
+curl.exe -s -X POST https://<your-static-web-app>/api/mcp `
+  -H "x-api-key: $env:NOTIFICATION_CLI_MCP_API_KEY" `
+  -H "Content-Type: application/json" `
+  -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}'
+```
 
 ## MSI installer
 
