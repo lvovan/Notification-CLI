@@ -140,7 +140,6 @@ h1 {
 }
 
 .subtitle,
-#status-detail,
 footer,
 time {
   color: var(--cp-text-muted);
@@ -178,12 +177,40 @@ time {
   background: var(--cp-danger);
 }
 
-#status-detail {
+#push-status {
   margin-top: 0.2rem;
-  font-size: 0.88rem;
 }
 
-.push-actions button,
+/* Large enough to stay an easy tap target while reading as an icon. */
+.bell-toggle {
+  justify-self: end;
+  width: 2.75rem;
+  height: 2.75rem;
+  border: 1px solid var(--cp-border);
+  border-radius: 50%;
+  background: var(--cp-surface-soft);
+  color: var(--cp-text);
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.bell-toggle:hover:not(:disabled),
+.bell-toggle:focus-visible {
+  border-color: var(--cp-border-strong);
+  background: var(--cp-accent-soft);
+}
+
+.bell-toggle[aria-pressed="true"] {
+  border-color: var(--cp-accent);
+  background: var(--cp-accent-soft);
+}
+
+.bell-toggle:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 .app-actions button {
   border: 0;
   border-radius: 0.625rem;
@@ -207,38 +234,24 @@ time {
 
 .app-actions {
   display: flex;
+  grid-column: 1 / -1;
   gap: 0.5rem;
 }
 
-.push-card {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0.75rem 1rem;
-  align-items: center;
-  margin-top: 1rem;
-  padding: 1rem 1.2rem;
-  border: 1px solid var(--cp-border);
-  border-radius: 1rem;
-  background: var(--cp-surface);
-}
-
-.push-card h2 {
-  margin-bottom: 0.25rem;
-}
-
-.push-card p {
-  color: var(--cp-text-muted);
-}
-
-.push-actions {
-  display: flex;
-  gap: 0.5rem;
+/* The row only carries the install prompt, so collapse it when unavailable. */
+.app-actions:has(button[hidden]) {
+  display: none;
 }
 
 .push-status {
-  grid-column: 1 / -1;
   min-height: 1.25rem;
+  color: var(--cp-text-muted);
   font-size: 0.875rem;
+}
+
+.push-status:empty {
+  min-height: 0;
+  margin-top: 0;
 }
 
 .push-status.error {
@@ -263,6 +276,11 @@ a {
   margin-top: 2.25rem;
 }
 
+#messages-status,
+#metrics-status {
+  margin-top: 1.1rem;
+}
+
 .metrics-card {
   margin-top: 2.25rem;
 }
@@ -270,12 +288,12 @@ a {
 .metrics {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 0.7rem;
+  gap: 0.4rem;
   margin: 0;
 }
 
 .metrics > div {
-  padding: 0.9rem 1rem;
+  padding: 0.5rem 0.35rem;
   border: 1px solid var(--cp-border);
   border-radius: 0.625rem;
   background: var(--cp-surface);
@@ -284,23 +302,17 @@ a {
 
 .metrics dt {
   color: var(--cp-text-muted);
-  font-size: 0.75rem;
+  font-size: 0.65rem;
   text-transform: uppercase;
   letter-spacing: 0.02em;
 }
 
 .metrics dd {
-  margin: 0.3rem 0 0;
+  margin: 0.15rem 0 0;
   color: var(--cp-text);
-  font-size: 1.5rem;
+  font-size: 1.15rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-}
-
-@media (max-width: 32rem) {
-  .metrics {
-    grid-template-columns: repeat(2, 1fr);
-  }
 }
 
 .section-heading {
@@ -383,32 +395,12 @@ footer {
     padding-top: 1.5rem;
   }
 
-  .status-card {
-    grid-template-columns: auto 1fr;
-  }
-
   .app-actions {
     grid-column: 1 / -1;
-  }
-
-  .app-actions {
     width: 100%;
   }
 
   .app-actions button {
-    flex: 1;
-  }
-
-  .push-card {
-    grid-template-columns: 1fr;
-  }
-
-  .push-actions,
-  .push-status {
-    grid-column: 1;
-  }
-
-  .push-actions button {
     flex: 1;
   }
 }

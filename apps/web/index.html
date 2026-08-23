@@ -59,34 +59,26 @@
 
       <section class="status-card" aria-live="polite">
         <span id="status-dot" class="status-dot"></span>
-        <div>
+        <div class="status-text">
           <strong id="status">Connecting...</strong>
-          <p id="status-detail">Establishing a secure connection</p>
+          <p
+            id="push-status"
+            class="push-status"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          ></p>
         </div>
-      </section>
-
-      <section class="push-card" aria-labelledby="push-title">
-        <div>
-          <h2 id="push-title">Background notifications</h2>
-          <p>
-            Receive notifications anytime, anywhere.
-          </p>
-        </div>
-        <div class="push-actions">
-          <button id="enable-notifications" type="button">
-            Enable notifications
-          </button>
-          <button id="disable-notifications" type="button" hidden>
-            Disable notifications
-          </button>
-        </div>
-        <p
-          id="push-status"
-          class="push-status"
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-        ></p>
+        <button
+          id="toggle-notifications"
+          class="bell-toggle"
+          type="button"
+          aria-pressed="false"
+          aria-label="Enable background notifications"
+          title="Enable background notifications"
+        >
+          🔕
+        </button>
       </section>
 
       <section class="metrics-card" aria-labelledby="metrics-title">

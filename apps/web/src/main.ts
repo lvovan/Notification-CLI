@@ -40,15 +40,11 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 const status = requiredElement("status");
-const statusDetail = requiredElement("status-detail");
 const statusDot = requiredElement("status-dot");
 const messageList = requiredElement<HTMLOListElement>("message-list");
 const emptyState = requiredElement("empty-state");
-const enableNotifications = requiredElement<HTMLButtonElement>(
-  "enable-notifications",
-);
-const disableNotifications = requiredElement<HTMLButtonElement>(
-  "disable-notifications",
+const toggleNotifications = requiredElement<HTMLButtonElement>(
+  "toggle-notifications",
 );
 const pushStatus = requiredElement("push-status");
 const metricsStatus = requiredElement("metrics-status");
@@ -101,11 +97,9 @@ function requiredElement<T extends HTMLElement = HTMLElement>(id: string): T {
 function setStatus(
   state: "connected" | "connecting" | "disconnected",
   title: string,
-  detail: string,
 ): void {
   statusDot.className = `status-dot ${state}`;
   status.textContent = title;
-  statusDetail.textContent = detail;
 }
 
 async function negotiate(): Promise<string> {
@@ -129,13 +123,13 @@ async function connect(): Promise<void> {
     setOfflineState();
     return;
   }
-  setStatus("connecting", "Connecting...", "Establishing a secure connection");
+  setStatus("connecting", "Connecting...");
 
   try {
     const socket = new WebSocket(await negotiate());
     socket.addEventListener("open", () => {
       reconnectAttempts = 0;
-      setStatus("connected", "Connected", "Listening for notifications");
+      setStatus("connected", "Connected");
     });
     socket.addEventListener("message", (event) => {
       const notification = parseIncomingNotification(event.data);
@@ -148,9 +142,8 @@ async function connect(): Promise<void> {
       }
     });
     socket.addEventListener("error", () => socket.close());
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "Connection failed";
-    setStatus("disconnected", "Disconnected", detail);
+  } catch {
+    setStatus("disconnected", "Disconnected");
     scheduleReconnect();
   }
 }
@@ -162,21 +155,13 @@ function scheduleReconnect(): void {
   }
   reconnectAttempts += 1;
   const delay = Math.min(30_000, 1000 * 2 ** (reconnectAttempts - 1));
-  setStatus(
-    "disconnected",
-    "Disconnected",
-    `Reconnecting in ${Math.ceil(delay / 1000)} seconds`,
-  );
+  setStatus("disconnected", "Disconnected");
   reconnectTimer = window.setTimeout(() => void connect(), delay);
 }
 
 function setOfflineState(): void {
   window.clearTimeout(reconnectTimer);
-  setStatus(
-    "disconnected",
-    "Offline",
-    "Cached messages remain available. Live updates will resume when online.",
-  );
+  setStatus("disconnected", "Offline");
   connectivity.textContent =
     "You are offline. Notification CLI is running from its cached app shell.";
   connectivity.hidden = false;
@@ -340,34 +325,43 @@ async function runPushTask(
   }
 
   pushBusy = true;
-  enableNotifications.disabled = true;
+  toggleNotifications.disabled = true;
   try {
     await action();
   } catch (error) {
-    enableNotifications.hidden = false;
     setPushError(failureContext, error);
   } finally {
     pushBusy = false;
-    enableNotifications.disabled = false;
+    toggleNotifications.disabled = false;
   }
 }
 
-function requestNotificationPermission(): Promise<void> {
+function enablePushNotifications(): Promise<void> {
   return runPushTask(async () => {
     setPushStatus("Waiting for notification permission...");
     const permission = await Notification.requestPermission();
     if (permission !== "granted") {
-      enableNotifications.hidden = permission === "denied";
+      setPushEnabled(false);
       setPushStatus(
         permission === "denied"
-          ? "Notifications are blocked. Allow them in browser settings to enable background notifications."
+          ? "Notifications are blocked. Allow them in browser settings."
           : "Notification permission was not granted.",
         true,
       );
       return;
     }
     await syncPushSubscription();
-  }, "Unable to enable background notifications");
+  }, "Unable to enable notifications");
+}
+
+/** Keeps the bell glyph, its accessible name and the status line in step. */
+function setPushEnabled(enabled: boolean): void {
+  const label = enabled ? "Disable notifications" : "Enable notifications";
+  toggleNotifications.textContent = enabled ? "🔔" : "🔕";
+  toggleNotifications.setAttribute("aria-pressed", String(enabled));
+  toggleNotifications.setAttribute("aria-label", label);
+  toggleNotifications.title = label;
+  setPushStatus(enabled ? "Notifications enabled" : "Notifications disabled");
 }
 
 function setPushStatus(message: string, isError = false): void {
@@ -479,21 +473,15 @@ async function savePushSubscription(
 
 async function syncPushSubscription(): Promise<void> {
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-    enableNotifications.hidden = true;
-    setPushStatus(
-      "Background notifications are not supported by this browser.",
-      true,
-    );
+    toggleNotifications.hidden = true;
+    setPushStatus("Notifications are not supported by this browser.", true);
     return;
   }
-  if (
-    !("Notification" in window) ||
-    Notification.permission !== "granted"
-  ) {
+  if (!("Notification" in window) || Notification.permission !== "granted") {
     return;
   }
 
-  setPushStatus("Setting up background notifications...");
+  setPushStatus("Enabling notifications...");
   const registration = await activeServiceWorker();
   const publicKey = await fetchPushConfig();
   const applicationServerKey = decodeApplicationServerKey(publicKey);
@@ -513,9 +501,7 @@ async function syncPushSubscription(): Promise<void> {
   }
 
   await savePushSubscription(subscription);
-  enableNotifications.hidden = true;
-  disableNotifications.hidden = false;
-  setPushStatus("Background notifications are enabled.");
+  setPushEnabled(true);
 }
 
 function keysEqual(
@@ -533,27 +519,34 @@ function keysEqual(
   );
 }
 
-async function unsubscribeFromPush(): Promise<void> {
-  if (pushBusy || !("serviceWorker" in navigator)) {
+/**
+ * Derives the toggle state from the live subscription rather than from the
+ * permission alone, so turning notifications off is not undone by a reload.
+ */
+async function restorePushState(): Promise<void> {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    toggleNotifications.hidden = true;
+    setPushStatus("Notifications are not supported by this browser.", true);
     return;
   }
+  const registration = await activeServiceWorker();
+  if (await registration.pushManager.getSubscription()) {
+    await syncPushSubscription();
+  }
+}
 
-  pushBusy = true;
-  disableNotifications.disabled = true;
-  setPushStatus("Disabling background notifications...");
-  try {
+function disablePushNotifications(): Promise<void> {
+  return runPushTask(async () => {
+    setPushStatus("Disabling notifications...");
     const registration = await activeServiceWorker();
     const subscription = await registration.pushManager.getSubscription();
     if (!subscription) {
-      enableNotifications.hidden = Notification.permission !== "granted";
-      disableNotifications.hidden = true;
-      setPushStatus("Background notifications are already disabled.");
+      setPushEnabled(false);
       return;
     }
 
     const payload = JSON.stringify(subscription.toJSON());
     const failures: string[] = [];
-    let browserRemoved = false;
     try {
       const response = await fetch("/api/push/subscriptions", {
         method: "DELETE",
@@ -572,27 +565,18 @@ async function unsubscribeFromPush(): Promise<void> {
     }
 
     try {
-      browserRemoved = await subscription.unsubscribe();
-      if (!browserRemoved) {
+      if (!(await subscription.unsubscribe())) {
         failures.push("browser removal was not confirmed");
       }
     } catch {
       failures.push("browser removal failed");
     }
 
-    enableNotifications.hidden =
-      !browserRemoved || Notification.permission !== "granted";
-    disableNotifications.hidden = browserRemoved;
+    setPushEnabled(false);
     if (failures.length > 0) {
       throw new Error(failures.join("; "));
     }
-    setPushStatus("Background notifications are disabled.");
-  } catch (error) {
-    setPushError("Unable to fully disable background notifications", error);
-  } finally {
-    pushBusy = false;
-    disableNotifications.disabled = false;
-  }
+  }, "Unable to fully disable notifications");
 }
 
 function applyServiceWorkerUpdate(worker: ServiceWorker): void {
@@ -667,14 +651,11 @@ async function registerServiceWorker(): Promise<void> {
 clearButton.addEventListener("click", () => {
   messageList.replaceChildren(emptyState);
 });
-enableNotifications.addEventListener(
-  "click",
-  () => void requestNotificationPermission(),
-);
-disableNotifications.addEventListener(
-  "click",
-  () => void unsubscribeFromPush(),
-);
+toggleNotifications.addEventListener("click", () => {
+  void (toggleNotifications.getAttribute("aria-pressed") === "true"
+    ? disablePushNotifications()
+    : enablePushNotifications());
+});
 window.addEventListener("beforeunload", () => {
   deliberatelyClosed = true;
 });
@@ -727,20 +708,18 @@ if ("serviceWorker" in navigator) {
   void registerServiceWorker();
 }
 if ("Notification" in window) {
+  setPushEnabled(false);
   if (Notification.permission === "granted") {
-    void runPushTask(
-      syncPushSubscription,
-      "Unable to refresh background notifications",
-    );
+    void runPushTask(restorePushState, "Unable to refresh notifications");
   } else if (Notification.permission === "denied") {
-    enableNotifications.hidden = true;
+    toggleNotifications.disabled = true;
     setPushStatus(
-      "Notifications are blocked. Allow them in browser settings to enable background notifications.",
+      "Notifications are blocked. Allow them in browser settings.",
       true,
     );
   }
 } else {
-  enableNotifications.hidden = true;
+  toggleNotifications.hidden = true;
   setPushStatus("Notifications are not supported by this browser.", true);
 }
 
