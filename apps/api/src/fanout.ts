@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import webPush, { type PushSubscription } from "web-push";
 import { AUTHORIZED_USERS_ENV, parseAuthorizedUsers } from "./auth.js";
+import { hasSetting, requireSetting } from "./configuration.js";
 import {
-  createPushSubscriptionStore,
+  tryCreatePushSubscriptionStore,
   type PushSubscriptionStore,
   type StoredPushSubscription,
 } from "./push-storage.js";
@@ -29,6 +30,7 @@ export interface WebPushSender {
 
 export interface FanoutReport {
   webPubSubDelivered: boolean;
+  pushConfigured: boolean;
   pushAttempted: number;
   pushDelivered: number;
   pushRemoved: number;
@@ -70,19 +72,25 @@ export function validateNotificationMessage(value: unknown): string | null {
 export function createWebPushSender(
   env: NodeJS.ProcessEnv = process.env,
 ): WebPushSender {
-  const publicKey = env[VAPID_PUBLIC_KEY_ENV]?.trim();
-  const privateKey = env[VAPID_PRIVATE_KEY_ENV]?.trim();
-  const subject = env[VAPID_SUBJECT_ENV]?.trim();
-  if (!publicKey || !privateKey || !subject) {
-    throw new Error(
-      `${VAPID_PUBLIC_KEY_ENV}, ${VAPID_PRIVATE_KEY_ENV}, and ${VAPID_SUBJECT_ENV} must be configured.`,
-    );
-  }
+  const publicKey = requireSetting(env, VAPID_PUBLIC_KEY_ENV);
+  const privateKey = requireSetting(env, VAPID_PRIVATE_KEY_ENV);
+  const subject = requireSetting(env, VAPID_SUBJECT_ENV);
   webPush.setVapidDetails(subject, publicKey, privateKey);
   return {
     send: (subscription, payload) =>
       webPush.sendNotification(subscription, payload, { TTL: 60 }),
   };
+}
+
+/** Returns null when VAPID credentials are intentionally not configured. */
+export function tryCreateWebPushSender(
+  env: NodeJS.ProcessEnv = process.env,
+): WebPushSender | null {
+  return hasSetting(env, VAPID_PUBLIC_KEY_ENV) &&
+    hasSetting(env, VAPID_PRIVATE_KEY_ENV) &&
+    hasSetting(env, VAPID_SUBJECT_ENV)
+    ? createWebPushSender(env)
+    : null;
 }
 
 async function deliverWebPush(
@@ -141,6 +149,7 @@ export async function fanOutNotification(
 ): Promise<FanoutReport> {
   const report: FanoutReport = {
     webPubSubDelivered: false,
+    pushConfigured: false,
     pushAttempted: 0,
     pushDelivered: 0,
     pushRemoved: 0,
@@ -149,13 +158,14 @@ export async function fanOutNotification(
   };
 
   const env = dependencies?.env ?? process.env;
+  // An empty allowlist yields no push targets, so background push fails closed
+  // without blocking real-time delivery.
   const authorizedUsers = parseAuthorizedUsers(env[AUTHORIZED_USERS_ENV]);
-  if (authorizedUsers.size === 0) {
-    throw new Error(`${AUTHORIZED_USERS_ENV} is not configured.`);
-  }
   const webPubSub = dependencies?.webPubSub ?? createWebPubSubClient(env);
-  const store = dependencies?.store ?? createPushSubscriptionStore(env);
-  const sender = dependencies?.webPush ?? createWebPushSender(env);
+  const store = dependencies?.store ?? tryCreatePushSubscriptionStore(env);
+  const sender = dependencies?.webPush ?? tryCreateWebPushSender(env);
+  report.pushConfigured = Boolean(store && sender);
+
   const notification = JSON.stringify({
     id: (dependencies?.notificationId ?? randomUUID)(),
     title: "Notification CLI",
@@ -165,6 +175,9 @@ export async function fanOutNotification(
   const results = await Promise.allSettled([
     webPubSub.sendToAll(notification, { contentType: "application/json" }),
     (async () => {
+      if (!store || !sender || authorizedUsers.size === 0) {
+        return;
+      }
       const subscriptions = await store.list(authorizedUsers);
       await deliverWebPush(
         subscriptions,

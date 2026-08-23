@@ -1,4 +1,5 @@
 import { WebPubSubServiceClient } from "@azure/web-pubsub";
+import { requireSetting } from "./configuration.js";
 
 export const HUB_NAME = "notifications";
 export const CONNECTION_STRING_ENV =
@@ -7,9 +8,8 @@ export const CONNECTION_STRING_ENV =
 export function createWebPubSubClient(
   env: NodeJS.ProcessEnv = process.env,
 ): WebPubSubServiceClient {
-  const connectionString = env[CONNECTION_STRING_ENV]?.trim();
-  if (!connectionString) {
-    throw new Error(`${CONNECTION_STRING_ENV} is not configured.`);
-  }
-  return new WebPubSubServiceClient(connectionString, HUB_NAME);
+  return new WebPubSubServiceClient(
+    requireSetting(env, CONNECTION_STRING_ENV),
+    HUB_NAME,
+  );
 }

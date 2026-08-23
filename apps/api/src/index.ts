@@ -29,7 +29,7 @@ app.http("mcp", {
   methods: ["POST"],
   authLevel: "anonymous",
   route: "mcp",
-  handler: (request) => handleMcpRequest(request),
+  handler: (request, context) => handleMcpRequest(request, undefined, undefined, context),
 });
 
 app.http("push-config", {
@@ -57,5 +57,6 @@ app.http("notify", {
   methods: ["POST"],
   authLevel: "anonymous",
   route: "notify",
-  handler: (request) => handleNotifyRequest(request),
+  handler: (request, context) =>
+    handleNotifyRequest(request, undefined, undefined, context),
 });

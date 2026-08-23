@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { TableClient, type TableEntity } from "@azure/data-tables";
+import { hasSetting, requireSetting } from "./configuration.js";
 
 export const PUSH_STORAGE_CONNECTION_STRING_ENV =
   "NOTIFICATION_CLI_PUSH_STORAGE_CONNECTION_STRING";
@@ -184,17 +185,19 @@ export class AzureTablePushSubscriptionStore
 export function createPushSubscriptionStore(
   env: NodeJS.ProcessEnv = process.env,
 ): PushSubscriptionStore {
-  const connectionString =
-    env[PUSH_STORAGE_CONNECTION_STRING_ENV]?.trim();
-  if (!connectionString) {
-    throw new Error(
-      `${PUSH_STORAGE_CONNECTION_STRING_ENV} is not configured.`,
-    );
-  }
   return new AzureTablePushSubscriptionStore(
     TableClient.fromConnectionString(
-      connectionString,
+      requireSetting(env, PUSH_STORAGE_CONNECTION_STRING_ENV),
       PUSH_SUBSCRIPTIONS_TABLE,
     ),
   );
+}
+
+/** Returns null when durable push storage is intentionally not configured. */
+export function tryCreatePushSubscriptionStore(
+  env: NodeJS.ProcessEnv = process.env,
+): PushSubscriptionStore | null {
+  return hasSetting(env, PUSH_STORAGE_CONNECTION_STRING_ENV)
+    ? createPushSubscriptionStore(env)
+    : null;
 }

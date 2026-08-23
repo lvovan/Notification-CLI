@@ -101,14 +101,21 @@ set:
 
 | Variable | Purpose |
 | --- | --- |
-| `NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING` | Server-side Web PubSub connection used to negotiate browser access and send MCP messages |
-| `NOTIFICATION_CLI_API_KEY` | Long random key used only by the Go CLI `/api/notify` endpoint |
-| `NOTIFICATION_CLI_MCP_API_KEY` | Separate long random key used only by the `/api/mcp` endpoint |
-| `AUTHORIZED_USERS` | Semicolon-separated Microsoft account email addresses allowed to use the browser app |
-| `NOTIFICATION_CLI_VAPID_PUBLIC_KEY` | URL-safe VAPID public key returned to authorized browsers |
-| `NOTIFICATION_CLI_VAPID_PRIVATE_KEY` | Secret VAPID private key used only by the API |
-| `NOTIFICATION_CLI_VAPID_SUBJECT` | VAPID contact URI, normally `mailto:you@example.com` |
-| `NOTIFICATION_CLI_PUSH_STORAGE_CONNECTION_STRING` | Azure Storage connection string used for durable push subscriptions |
+| `NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING` | **Required.** Server-side Web PubSub connection used to negotiate browser access and send messages |
+| `NOTIFICATION_CLI_API_KEY` | **Required.** Long random key used only by the Go CLI `/api/notify` endpoint |
+| `NOTIFICATION_CLI_MCP_API_KEY` | **Required.** Separate long random key used only by the `/api/mcp` endpoint |
+| `AUTHORIZED_USERS` | **Required.** Semicolon-separated Microsoft account email addresses allowed to use the browser app |
+| `NOTIFICATION_CLI_VAPID_PUBLIC_KEY` | Push only. URL-safe VAPID public key returned to authorized browsers |
+| `NOTIFICATION_CLI_VAPID_PRIVATE_KEY` | Push only. Secret VAPID private key used only by the API |
+| `NOTIFICATION_CLI_VAPID_SUBJECT` | Push only. VAPID contact URI, normally `mailto:you@example.com` |
+| `NOTIFICATION_CLI_PUSH_STORAGE_CONNECTION_STRING` | Push only. Azure Storage connection string used for durable push subscriptions |
+
+Real-time delivery through Web PubSub is the required core transport. The four
+"push only" settings are an optional enhancement: when any of them is missing,
+notifications are still delivered live to open pages and the response reports
+`"pushConfigured": false` instead of failing. Missing a **required** setting
+makes `/api/notify` answer `503` naming the exact variable, for example
+`{"error":"NOTIFICATION_CLI_API_KEY is not configured."}`.
 
 Generate a VAPID key pair once and keep it stable. Rotating it requires clients
 to create a new browser subscription:

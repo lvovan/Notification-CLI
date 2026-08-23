@@ -1,8 +1,13 @@
-import type { HttpRequest, HttpResponseInit } from "@azure/functions";
+import type {
+  HttpRequest,
+  HttpResponseInit,
+  InvocationContext,
+} from "@azure/functions";
 import {
   hasValidApiKey,
   NOTIFICATION_API_KEY_ENV,
 } from "./api-key.js";
+import { ConfigurationError } from "./configuration.js";
 import {
   FanoutError,
   fanOutNotification,
@@ -14,11 +19,11 @@ export async function handleNotifyRequest(
   request: HttpRequest,
   env: NodeJS.ProcessEnv = process.env,
   fanOut: (message: string) => Promise<FanoutReport> = fanOutNotification,
+  context?: InvocationContext,
 ): Promise<HttpResponseInit> {
   if (!hasValidApiKey(request, NOTIFICATION_API_KEY_ENV, env)) {
     return {
       status: 401,
-      headers: { "WWW-Authenticate": "Bearer" },
       jsonBody: { error: "Unauthorized" },
     };
   }
@@ -48,6 +53,9 @@ export async function handleNotifyRequest(
     return { status: 200, jsonBody: { delivered: true, delivery } };
   } catch (error) {
     if (error instanceof FanoutError) {
+      context?.error(
+        `Notification delivery was incomplete: ${error.report.errors.join("; ")}`,
+      );
       return {
         status: 502,
         jsonBody: {
@@ -55,6 +63,13 @@ export async function handleNotifyRequest(
           error: error.message,
           delivery: error.report,
         },
+      };
+    }
+    if (error instanceof ConfigurationError) {
+      context?.error(`Notification API misconfigured: ${error.message}`);
+      return {
+        status: 503,
+        jsonBody: { delivered: false, error: error.message },
       };
     }
     throw error;

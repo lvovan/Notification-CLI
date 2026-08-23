@@ -50,6 +50,7 @@ test("send_notification uses shared fan-out and reports partial delivery", async
   let delivered = "";
   const successfulReport: FanoutReport = {
     webPubSubDelivered: true,
+    pushConfigured: true,
     pushAttempted: 1,
     pushDelivered: 1,
     pushRemoved: 0,

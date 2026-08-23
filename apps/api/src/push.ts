@@ -3,6 +3,7 @@ import {
   authorizeBrowserRequest,
   browserAuthorizationError,
 } from "./auth.js";
+import { ConfigurationError } from "./configuration.js";
 import {
   VAPID_PUBLIC_KEY_ENV,
 } from "./fanout.js";
@@ -17,6 +18,13 @@ function noStore(response: HttpResponseInit): HttpResponseInit {
     ...response,
     headers: { ...response.headers, "Cache-Control": "no-store" },
   };
+}
+
+function configurationUnavailable(error: unknown): HttpResponseInit {
+  if (error instanceof ConfigurationError) {
+    return noStore({ status: 503, jsonBody: { error: error.message } });
+  }
+  throw error;
 }
 
 export function handlePushConfigRequest(
@@ -63,10 +71,14 @@ export async function handleSavePushSubscription(
     };
   }
 
-  await (store ?? createPushSubscriptionStore(env)).save(
-    authorization.email,
-    subscription,
-  );
+  try {
+    await (store ?? createPushSubscriptionStore(env)).save(
+      authorization.email,
+      subscription,
+    );
+  } catch (error) {
+    return configurationUnavailable(error);
+  }
   return { status: 204 };
 }
 
@@ -100,9 +112,13 @@ export async function handleDeletePushSubscription(
     };
   }
 
-  await (store ?? createPushSubscriptionStore(env)).remove(
-    authorization.email,
-    endpoint,
-  );
+  try {
+    await (store ?? createPushSubscriptionStore(env)).remove(
+      authorization.email,
+      endpoint,
+    );
+  } catch (error) {
+    return configurationUnavailable(error);
+  }
   return { status: 204 };
 }

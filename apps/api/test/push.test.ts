@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { HttpRequest } from "@azure/functions";
+import { ConfigurationError } from "../src/configuration.js";
 import {
   FanoutError,
   fanOutNotification,
@@ -193,8 +194,33 @@ test("fan-out delivers through Web PubSub and Web Push", async () => {
   assert.deepEqual(pushPayloads, [notificationPayload]);
   assert.deepEqual(report, {
     webPubSubDelivered: true,
+    pushConfigured: true,
     pushAttempted: 1,
     pushDelivered: 1,
+    pushRemoved: 0,
+    pushFailed: 0,
+    errors: [],
+  });
+});
+
+test("fan-out succeeds through Web PubSub alone when push is not configured", async () => {
+  const pubSubMessages: string[] = [];
+  const report = await fanOutNotification("hello", {
+    env: { AUTHORIZED_USERS: "user@example.com" },
+    notificationId: () => "notification-id",
+    webPubSub: {
+      sendToAll: async (message) => {
+        pubSubMessages.push(message);
+      },
+    },
+  });
+
+  assert.equal(pubSubMessages.length, 1);
+  assert.deepEqual(report, {
+    webPubSubDelivered: true,
+    pushConfigured: false,
+    pushAttempted: 0,
+    pushDelivered: 0,
     pushRemoved: 0,
     pushFailed: 0,
     errors: [],
@@ -249,6 +275,7 @@ test("notify uses API-key auth, validates JSON, and reports partial failure", as
       deliveredMessage = message;
       return {
         webPubSubDelivered: true,
+        pushConfigured: false,
         pushAttempted: 0,
         pushDelivered: 0,
         pushRemoved: 0,
@@ -277,6 +304,7 @@ test("notify uses API-key auth, validates JSON, and reports partial failure", as
 
   const report = {
     webPubSubDelivered: true,
+    pushConfigured: true,
     pushAttempted: 1,
     pushDelivered: 0,
     pushRemoved: 0,
@@ -294,5 +322,22 @@ test("notify uses API-key auth, validates JSON, and reports partial failure", as
   assert.equal(
     (partial.jsonBody as { delivered: boolean }).delivered,
     false,
+  );
+});
+
+test("notify reports 503 naming the missing setting when misconfigured", async () => {
+  const response = await handleNotifyRequest(
+    request({ message: "hello" }, { "x-api-key": "cli-test-key" }),
+    { NOTIFICATION_CLI_API_KEY: "cli-test-key" },
+    async () => {
+      throw new ConfigurationError(
+        "NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING",
+      );
+    },
+  );
+  assert.equal(response.status, 503);
+  assert.match(
+    (response.jsonBody as { error: string }).error,
+    /NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING is not configured/,
   );
 });
