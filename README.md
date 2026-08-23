@@ -123,8 +123,12 @@ Web PubSub connection string, VAPID private key, API key, and Storage
 connection string remain server-side.
 
 The Static Web App uses its Free-tier-compatible built-in Microsoft Entra ID
-provider. Visiting the page redirects to `/.auth/login/aad`; no custom identity
-provider registration or paid role management is required. Set
+provider to gate only the PWA frontend. Visiting the page redirects to
+`/.auth/login/aad`; no custom identity provider registration or paid role
+management is required. All `/api/*` routes remain anonymous at the Static Web
+Apps routing layer and enforce their own security: `/api/notify` and `/api/mcp`
+use separate API keys, while browser session, negotiation, and push-subscription
+handlers validate the signed-in principal and allowlist. Set
 `AUTHORIZED_USERS` to one or more email addresses, for example
 `first.user@example.com;second.user@example.com`. Comparison ignores case and
 surrounding whitespace. The API fails closed when the setting is absent or
@@ -168,15 +172,15 @@ GitHub Copilot MCP configuration using bearer authentication looks like:
       "type": "http",
       "url": "https://<your-static-web-app>.azurestaticapps.net/api/mcp",
       "headers": {
-        "Authorization": "Bearer ${input:notification-cli-key}"
+        "Authorization": "Bearer ${input:notification-cli-mcp-api-key}"
       }
     }
   },
   "inputs": [
     {
-      "id": "notification-cli-key",
+      "id": "notification-cli-mcp-api-key",
       "type": "promptString",
-      "description": "Notification CLI MCP API key",
+      "description": "Value of NOTIFICATION_CLI_MCP_API_KEY",
       "password": true
     }
   ]
@@ -227,9 +231,9 @@ packages the web application, and deploys the frontend and API.
 - Keep the local CLI configuration file private to your user account.
 - The authenticated negotiate endpoint grants receive-only, short-lived
   access. It does not grant permission to publish messages.
-- `/api/mcp` intentionally remains anonymous at the Static Web Apps routing
-  layer for non-browser Copilot clients, but every request still requires the
-  MCP API key.
+- All `/api/*` routes intentionally remain anonymous at the Static Web Apps
+  routing layer. Each handler fails closed unless its endpoint-specific API key
+  or authorized browser principal is valid.
 
 ## License
 

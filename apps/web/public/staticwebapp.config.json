@@ -8,24 +8,8 @@
       "allowedRoles": ["anonymous"]
     },
     {
-      "route": "/api/mcp",
-      "methods": ["POST"],
+      "route": "/api/*",
       "allowedRoles": ["anonymous"]
-    },
-    {
-      "route": "/api/notify",
-      "methods": ["POST"],
-      "allowedRoles": ["anonymous"]
-    },
-    {
-      "route": "/api/session",
-      "methods": ["GET"],
-      "allowedRoles": ["authenticated"]
-    },
-    {
-      "route": "/api/negotiate",
-      "methods": ["GET"],
-      "allowedRoles": ["authenticated"]
     },
     {
       "route": "/*",

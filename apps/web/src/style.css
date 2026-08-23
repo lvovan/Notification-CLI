@@ -86,6 +86,22 @@ header {
   margin-bottom: 2rem;
 }
 
+.logout-button {
+  margin-left: auto;
+  border: 1px solid var(--cp-border);
+  border-radius: 0.625rem;
+  padding: 0.5rem 0.75rem;
+  color: var(--cp-text);
+  background: var(--cp-surface);
+  text-decoration: none;
+}
+
+.logout-button:hover,
+.logout-button:focus-visible {
+  border-color: var(--cp-accent);
+  color: var(--cp-accent);
+}
+
 .mark {
   display: grid;
   width: 3rem;

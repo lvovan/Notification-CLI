@@ -10,7 +10,7 @@ interface Route {
   allowedRoles: string[];
 }
 
-test("SWA routes protect browser APIs and preserve key-protected senders", async () => {
+test("SWA routes leave APIs to endpoint security and protect only the frontend", async () => {
   const config = JSON.parse(
     await readFile(
       resolve("../web/public/staticwebapp.config.json"),
@@ -26,26 +26,17 @@ test("SWA routes protect browser APIs and preserve key-protected senders", async
   const route = (path: string) =>
     config.routes.find((candidate) => candidate.route === path);
 
-  assert.deepEqual(route("/api/mcp"), {
-    route: "/api/mcp",
-    methods: ["POST"],
+  assert.deepEqual(route("/api/*"), {
+    route: "/api/*",
     allowedRoles: ["anonymous"],
   });
-
-  assert.deepEqual(route("/api/notify"), {
-    route: "/api/notify",
-    methods: ["POST"],
-    allowedRoles: ["anonymous"],
-  });
-  assert.deepEqual(route("/api/negotiate")?.allowedRoles, ["authenticated"]);
-  assert.deepEqual(route("/api/session")?.allowedRoles, ["authenticated"]);
   assert.deepEqual(route("/*")?.allowedRoles, ["authenticated"]);
 
   const catchAllIndex = config.routes.findIndex(
     (candidate) => candidate.route === "/*",
   );
   assert.ok(
-    config.routes.findIndex((candidate) => candidate.route === "/api/notify") <
+    config.routes.findIndex((candidate) => candidate.route === "/api/*") <
       catchAllIndex,
   );
 });
