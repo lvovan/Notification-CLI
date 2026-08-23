@@ -78,8 +78,8 @@ func TestPostNotification(t *testing.T) {
 		if request.Method != http.MethodPost || request.URL.Path != "/api/notify" {
 			t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
 		}
-		if actual := request.Header.Get("Authorization"); actual != "Bearer "+testAPIKey {
-			t.Errorf("unexpected authorization header")
+		if actual := request.Header.Get("x-api-key"); actual != testAPIKey {
+			t.Errorf("unexpected x-api-key header")
 		}
 		if actual := request.Header.Get("Content-Type"); actual != "application/json" {
 			t.Errorf("unexpected content type: %s", actual)

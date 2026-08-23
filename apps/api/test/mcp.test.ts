@@ -8,20 +8,11 @@ function requestWithHeaders(values: Record<string, string>) {
   return { headers: new Headers(values) } as Pick<HttpRequest, "headers">;
 }
 
-test("accepts bearer and x-api-key authentication", () => {
+test("accepts only the MCP x-api-key", () => {
   const env = {
     NOTIFICATION_CLI_MCP_API_KEY: "mcp-test-key",
     NOTIFICATION_CLI_API_KEY: "cli-test-key",
   };
-  assert.equal(
-    isAuthorized(
-      requestWithHeaders({
-        authorization: `Bearer ${env.NOTIFICATION_CLI_MCP_API_KEY}`,
-      }),
-      env,
-    ),
-    true,
-  );
   assert.equal(
     isAuthorized(requestWithHeaders({ "x-api-key": "mcp-test-key" }), env),
     true,
@@ -32,10 +23,10 @@ test("accepts bearer and x-api-key authentication", () => {
   );
 });
 
-test("rejects malformed bearer authentication", () => {
+test("rejects Authorization header authentication", () => {
   const env = { NOTIFICATION_CLI_MCP_API_KEY: "test-key" };
   assert.equal(
-    isAuthorized(requestWithHeaders({ authorization: "Basic test-key" }), env),
+    isAuthorized(requestWithHeaders({ authorization: "Bearer test-key" }), env),
     false,
   );
 });

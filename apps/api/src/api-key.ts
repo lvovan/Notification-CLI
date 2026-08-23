@@ -26,12 +26,5 @@ export function hasValidApiKey(
     throw new Error(`${environmentVariable} is not configured.`);
   }
 
-  const authorization = request.headers.get("authorization");
-  const bearerKey = authorization?.startsWith("Bearer ")
-    ? authorization.slice("Bearer ".length)
-    : null;
-  return (
-    secureEqual(bearerKey, configuredKey) ||
-    secureEqual(request.headers.get("x-api-key"), configuredKey)
-  );
+  return secureEqual(request.headers.get("x-api-key"), configuredKey);
 }

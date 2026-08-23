@@ -163,7 +163,7 @@ https://<your-static-web-app>.azurestaticapps.net/api/mcp
 
 It accepts either the HTTP Bearer authorization scheme or an
 `x-api-key: <key>` header. A
-GitHub Copilot MCP configuration using bearer authentication looks like:
+GitHub Copilot MCP configuration using the dedicated API-key header looks like:
 
 ```json
 {
@@ -172,7 +172,7 @@ GitHub Copilot MCP configuration using bearer authentication looks like:
       "type": "http",
       "url": "https://<your-static-web-app>.azurestaticapps.net/api/mcp",
       "headers": {
-        "Authorization": "Bearer ${input:notification-cli-mcp-api-key}"
+        "x-api-key": "${input:notification-cli-mcp-api-key}"
       }
     }
   },

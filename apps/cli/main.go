@@ -90,7 +90,7 @@ func postNotification(ctx context.Context, client *http.Client, config configura
 	if err != nil {
 		return fmt.Errorf("create notification request: %w", err)
 	}
-	request.Header.Set("Authorization", "Bearer "+config.APIKey)
+	request.Header.Set("x-api-key", config.APIKey)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 
