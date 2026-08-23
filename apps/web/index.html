@@ -81,10 +81,7 @@
         </button>
       </section>
 
-      <section class="metrics-card" aria-labelledby="metrics-title">
-        <div class="section-heading">
-          <h2 id="metrics-title">Notifications sent</h2>
-        </div>
+      <section class="metrics-card" aria-label="Notifications sent">
         <dl class="metrics" id="metrics">
           <div>
             <dt>Last 24 hours</dt>
@@ -113,7 +110,7 @@
 
       <section class="messages" aria-labelledby="messages-title">
         <div class="section-heading">
-          <h2 id="messages-title">Messages</h2>
+          <h2 id="messages-title">Notifications</h2>
         </div>
         <ol id="message-list">
           <li id="empty-state" class="empty-state">
@@ -145,8 +142,10 @@
         });
         const session = await response.json();
         if (response.ok && session.authorized) {
-          document.querySelector("#account-email").textContent =
-            session.email ?? "";
+          const email = document.querySelector("#account-email");
+          email.textContent = session.email ?? "";
+          // The header truncates long addresses, so keep the full one on hover.
+          email.title = session.email ?? "";
           gate.hidden = true;
           app.hidden = false;
           await import("/src/main.ts");

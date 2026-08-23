@@ -23,6 +23,9 @@
   --cp-panel-strong: rgba(255, 255, 255, 0.96);
   --cp-sheen: rgba(255, 255, 255, 0.55);
   --cp-highlight: rgba(177, 31, 75, 0.12);
+  --header-mark-size: 3rem;
+  /* Also the gap above the metrics, so the two spacings stay identical. */
+  --metrics-gap: 0.4rem;
   font-family:
     "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--cp-text);
@@ -86,27 +89,41 @@ header {
   margin-bottom: 2rem;
 }
 
+header > div:first-of-type {
+  min-width: 0;
+}
+
+/* The account block matches the logo height so the header reads as one band. */
 .account {
   display: flex;
+  height: var(--header-mark-size);
+  max-width: 40%;
   margin-left: auto;
   flex-direction: column;
   align-items: flex-end;
-  gap: 0.4rem;
+  justify-content: space-between;
+  min-width: 0;
 }
 
 .account-email {
+  max-width: 100%;
   color: var(--cp-text-muted);
   font-size: 0.68rem;
+  line-height: 1.1;
   text-align: right;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .logout-button {
   border: 1px solid var(--cp-border);
-  border-radius: 0.625rem;
-  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  padding: 0.25rem 0.6rem;
   color: var(--cp-text);
   background: var(--cp-surface);
+  font-size: 0.8rem;
+  line-height: 1.35;
   text-decoration: none;
 }
 
@@ -118,8 +135,8 @@ header {
 
 .mark {
   display: grid;
-  width: 3rem;
-  height: 3rem;
+  width: var(--header-mark-size);
+  height: var(--header-mark-size);
   place-items: center;
   border-radius: 0.625rem;
   color: var(--cp-accent-fg);
@@ -282,13 +299,13 @@ a {
 }
 
 .metrics-card {
-  margin-top: 2.25rem;
+  margin-top: var(--metrics-gap);
 }
 
 .metrics {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 0.4rem;
+  gap: var(--metrics-gap);
   margin: 0;
 }
 
@@ -395,6 +412,11 @@ footer {
 @media (max-width: 560px) {
   .shell {
     padding-top: 1.5rem;
+  }
+
+  /* Keep the title on one line; the full address stays in the tooltip. */
+  .account {
+    max-width: 6.5rem;
   }
 
   .app-actions {
