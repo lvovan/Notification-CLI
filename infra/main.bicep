@@ -35,15 +35,10 @@ param location string = 'westeurope'
 @description('Semicolon-separated Microsoft account email addresses allowed to open the web frontend, for example "first@example.com;second@example.com".')
 param authorizedUsers string
 
-@description('Long random key the Go CLI presents to /api/notify.')
+@description('Long random key the Go CLI and the MCP server both present to /api/notify and /api/mcp.')
 @secure()
 @minLength(32)
 param notificationApiKey string
-
-@description('Separate long random key the MCP server presents to /api/mcp. Must differ from the CLI key so either can be rotated on its own.')
-@secure()
-@minLength(32)
-param mcpApiKey string
 
 @description('URL-safe VAPID public key handed to authorized browsers. Leave empty to deploy without Web Push; live delivery to open tabs still works.')
 param vapidPublicKey string = ''
@@ -158,7 +153,6 @@ resource staticWebAppSettings 'Microsoft.Web/staticSites/config@2024-11-01' = {
       NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING: webPubSub.listKeys().primaryConnectionString
       NOTIFICATION_CLI_STORAGE_CONNECTION_STRING: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};AccountKey=${storageAccount.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
       NOTIFICATION_CLI_API_KEY: notificationApiKey
-      NOTIFICATION_CLI_MCP_API_KEY: mcpApiKey
       NOTIFICATION_CLI_RETENTION_DAYS: string(retentionDays)
       AUTHORIZED_USERS: authorizedUsers
     },

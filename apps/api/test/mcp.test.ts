@@ -3,31 +3,55 @@ import test from "node:test";
 import type { HttpRequest } from "@azure/functions";
 import { FanoutError, type FanoutReport } from "../src/fanout.js";
 import { handleMcpRequest, isAuthorized } from "../src/mcp.js";
+import { handleNotifyRequest } from "../src/notify.js";
 
 function requestWithHeaders(values: Record<string, string>) {
   return { headers: new Headers(values) } as Pick<HttpRequest, "headers">;
 }
 
-test("accepts only the MCP x-api-key", () => {
-  const env = {
-    NOTIFICATION_CLI_MCP_API_KEY: "mcp-test-key",
-    NOTIFICATION_CLI_API_KEY: "cli-test-key",
-  };
+test("accepts the shared x-api-key and rejects anything else", () => {
+  const env = { NOTIFICATION_CLI_API_KEY: "shared-test-key" };
   assert.equal(
-    isAuthorized(requestWithHeaders({ "x-api-key": "mcp-test-key" }), env),
+    isAuthorized(requestWithHeaders({ "x-api-key": "shared-test-key" }), env),
     true,
   );
   assert.equal(
-    isAuthorized(requestWithHeaders({ "x-api-key": "cli-test-key" }), env),
+    isAuthorized(requestWithHeaders({ "x-api-key": "another-key" }), env),
     false,
   );
 });
 
 test("rejects Authorization header authentication", () => {
-  const env = { NOTIFICATION_CLI_MCP_API_KEY: "test-key" };
+  const env = { NOTIFICATION_CLI_API_KEY: "test-key" };
   assert.equal(
     isAuthorized(requestWithHeaders({ authorization: "Bearer test-key" }), env),
     false,
+  );
+});
+
+test("one key authorizes both the CLI and the MCP endpoints", async () => {
+  const env = { NOTIFICATION_CLI_API_KEY: "shared-test-key" };
+  const notified = await handleNotifyRequest(
+    {
+      headers: new Headers({ "x-api-key": "shared-test-key" }),
+      json: async () => ({ message: "hello" }),
+    } as unknown as HttpRequest,
+    env,
+    async () => ({
+      webPubSubDelivered: true,
+      pushConfigured: false,
+      pushAttempted: 0,
+      pushDelivered: 0,
+      pushRemoved: 0,
+      pushFailed: 0,
+      errors: [],
+    }),
+  );
+
+  assert.equal(notified.status, 200);
+  assert.equal(
+    isAuthorized(requestWithHeaders({ "x-api-key": "shared-test-key" }), env),
+    true,
   );
 });
 
@@ -59,7 +83,7 @@ test("send_notification uses shared fan-out and reports partial delivery", async
   };
   const accepted = await handleMcpRequest(
     toolCallRequest(" hello "),
-    { NOTIFICATION_CLI_MCP_API_KEY: "mcp-test-key" },
+    { NOTIFICATION_CLI_API_KEY: "mcp-test-key" },
     async (message) => {
       delivered = message;
       return successfulReport;
@@ -83,7 +107,7 @@ test("send_notification uses shared fan-out and reports partial delivery", async
   };
   const partial = await handleMcpRequest(
     toolCallRequest("hello"),
-    { NOTIFICATION_CLI_MCP_API_KEY: "mcp-test-key" },
+    { NOTIFICATION_CLI_API_KEY: "mcp-test-key" },
     async () => {
       throw new FanoutError(failedReport);
     },

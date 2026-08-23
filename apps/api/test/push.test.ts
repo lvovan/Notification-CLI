@@ -294,11 +294,8 @@ test("notify uses API-key auth, validates JSON, and reports partial failure", as
   assert.equal(deliveredMessage, "hello");
 
   const denied = await handleNotifyRequest(
-    request({ message: "hello" }, { "x-api-key": "mcp-test-key" }),
-    {
-      NOTIFICATION_CLI_API_KEY: "cli-test-key",
-      NOTIFICATION_CLI_MCP_API_KEY: "mcp-test-key",
-    },
+    request({ message: "hello" }, { "x-api-key": "wrong-key" }),
+    { NOTIFICATION_CLI_API_KEY: "cli-test-key" },
   );
   assert.equal(denied.status, 401);
 

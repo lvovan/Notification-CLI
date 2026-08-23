@@ -3,7 +3,7 @@ import type {
   HttpResponseInit,
   InvocationContext,
 } from "@azure/functions";
-import { hasValidApiKey, MCP_API_KEY_ENV } from "./api-key.js";
+import { hasValidApiKey, NOTIFICATION_API_KEY_ENV } from "./api-key.js";
 import { ConfigurationError } from "./configuration.js";
 import {
   FanoutError,
@@ -12,7 +12,7 @@ import {
   type FanoutReport,
 } from "./fanout.js";
 
-export { MCP_API_KEY_ENV };
+export { NOTIFICATION_API_KEY_ENV };
 
 interface JsonRpcRequest {
   jsonrpc: "2.0";
@@ -75,7 +75,7 @@ export function isAuthorized(
   request: Pick<HttpRequest, "headers">,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return hasValidApiKey(request, MCP_API_KEY_ENV, env);
+  return hasValidApiKey(request, env);
 }
 
 export async function handleMcpRequest(

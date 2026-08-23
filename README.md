@@ -132,8 +132,7 @@ the Contributor role over the resource group, then set:
 | `AZURE_CLIENT_ID` | Application (client) ID of the app registration |
 | `AZURE_TENANT_ID` | Directory (tenant) ID |
 | `AZURE_SUBSCRIPTION_ID` | Target subscription |
-| `NOTIFICATION_CLI_API_KEY` | Key the CLI presents to `/api/notify` |
-| `NOTIFICATION_CLI_MCP_API_KEY` | Separate key the MCP client presents to `/api/mcp` |
+| `NOTIFICATION_CLI_API_KEY` | Key the CLI and the MCP client present to `/api/notify` and `/api/mcp` |
 | `VAPID_PUBLIC_KEY` | Web Push public key. Leave unset to deploy without push |
 | `VAPID_PRIVATE_KEY` | Web Push private key |
 
@@ -159,8 +158,7 @@ az deployment group create `
   --resource-group notification-cli `
   --template-file infra\main.bicep `
   --parameters authorizedUsers="you@example.com" `
-               notificationApiKey=$env:NOTIFICATION_CLI_API_KEY `
-               mcpApiKey=$env:NOTIFICATION_CLI_MCP_API_KEY
+               notificationApiKey=$env:NOTIFICATION_CLI_API_KEY
 ```
 
 Because the settings resource replaces the entire collection, a setting added
@@ -176,8 +174,7 @@ manually created instance:
 | Variable | Purpose |
 | --- | --- |
 | `NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING` | **Required.** Server-side Web PubSub connection used to negotiate browser access and send messages |
-| `NOTIFICATION_CLI_API_KEY` | **Required.** Long random key used only by the Go CLI `/api/notify` endpoint |
-| `NOTIFICATION_CLI_MCP_API_KEY` | **Required.** Separate long random key used only by the `/api/mcp` endpoint |
+| `NOTIFICATION_CLI_API_KEY` | **Required.** Long random key shared by the Go CLI and the MCP server to reach `/api/notify` and `/api/mcp` |
 | `AUTHORIZED_USERS` | **Required.** Semicolon-separated Microsoft account email addresses allowed to use the browser app |
 | `NOTIFICATION_CLI_VAPID_PUBLIC_KEY` | Push only. URL-safe VAPID public key returned to authorized browsers |
 | `NOTIFICATION_CLI_VAPID_PRIVATE_KEY` | Push only. Secret VAPID private key used only by the API |
@@ -209,8 +206,8 @@ provider to gate only the PWA frontend. Visiting the page redirects to
 `/.auth/login/aad`; no custom identity provider registration or paid role
 management is required. All `/api/*` routes remain anonymous at the Static Web
 Apps routing layer and enforce their own security: `/api/notify` and `/api/mcp`
-use separate API keys, while browser session, negotiation, and push-subscription
-handlers validate the signed-in principal and allowlist. Set
+share a single API key, while browser session, negotiation, and
+push-subscription handlers validate the signed-in principal and allowlist. Set
 `AUTHORIZED_USERS` to one or more email addresses, for example
 `first.user@example.com;second.user@example.com`. Comparison ignores case and
 surrounding whitespace. The API fails closed when the setting is absent or
@@ -351,8 +348,8 @@ https://<your-static-web-app>.azurestaticapps.net/api/mcp
 ```
 
 It authenticates with an `x-api-key: <key>` header carrying
-`NOTIFICATION_CLI_MCP_API_KEY`. The two clients differ in how they supply that
-secret, so use the matching example below.
+`NOTIFICATION_CLI_API_KEY`, the same key the CLI uses. The two MCP clients
+differ in how they supply that secret, so use the matching example below.
 
 ### VS Code
 
@@ -366,15 +363,15 @@ storing the answer in its secret storage. Add to `.vscode/mcp.json`:
       "type": "http",
       "url": "https://<your-static-web-app>.azurestaticapps.net/api/mcp",
       "headers": {
-        "x-api-key": "${input:notification-cli-mcp-api-key}"
+        "x-api-key": "${input:notification-cli-api-key}"
       }
     }
   },
   "inputs": [
     {
-      "id": "notification-cli-mcp-api-key",
+      "id": "notification-cli-api-key",
       "type": "promptString",
-      "description": "Value of NOTIFICATION_CLI_MCP_API_KEY",
+      "description": "Value of NOTIFICATION_CLI_API_KEY",
       "password": true
     }
   ]
@@ -397,20 +394,20 @@ verbatim, which the server rejects with `401`. Add to
       "tools": ["*"],
       "url": "https://<your-static-web-app>.azurestaticapps.net/api/mcp",
       "headers": {
-        "x-api-key": "${NOTIFICATION_CLI_MCP_API_KEY}"
+        "x-api-key": "${NOTIFICATION_CLI_API_KEY}"
       }
     }
   }
 }
 ```
 
-`NOTIFICATION_CLI_MCP_API_KEY` must be set in the environment that launches
+`NOTIFICATION_CLI_API_KEY` must be set in the environment that launches
 `copilot`, otherwise the header is sent empty and the server answers `401`.
 Persist it for future sessions with:
 
 ```powershell
 [Environment]::SetEnvironmentVariable(
-  "NOTIFICATION_CLI_MCP_API_KEY", "<key>", "User")
+  "NOTIFICATION_CLI_API_KEY", "<key>", "User")
 ```
 
 The server implements stateless Streamable HTTP JSON-RPC and exposes
@@ -435,7 +432,7 @@ Verify the endpoint without sending a notification:
 
 ```powershell
 curl.exe -s -X POST https://<your-static-web-app>/api/mcp `
-  -H "x-api-key: $env:NOTIFICATION_CLI_MCP_API_KEY" `
+  -H "x-api-key: $env:NOTIFICATION_CLI_API_KEY" `
   -H "Content-Type: application/json" `
   -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}'
 ```
@@ -473,10 +470,9 @@ and API. Unlike the infrastructure workflow it also runs on every push to
 - Never place the Web PubSub connection string in a `VITE_*` variable. Vite
   variables are embedded in browser assets.
 - Keep the VAPID private key and Azure Storage connection string server-side.
-- Use a unique, randomly generated MCP API key and rotate it if exposed.
-- Use distinct random values for `NOTIFICATION_CLI_API_KEY` and
-  `NOTIFICATION_CLI_MCP_API_KEY`; each endpoint rejects the other endpoint's
-  key.
+- Use a long, randomly generated `NOTIFICATION_CLI_API_KEY` and rotate it if
+  exposed. It is the only credential guarding `/api/notify` and `/api/mcp`, so
+  rotating it means updating both the CLI configuration and every MCP client.
 - Keep `AUTHORIZED_USERS` limited to the Microsoft accounts that should receive
   browser notifications. An authenticated account is not sufficient by itself.
 - Keep the local CLI configuration file private to your user account.

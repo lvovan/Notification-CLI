@@ -3,10 +3,7 @@ import type {
   HttpResponseInit,
   InvocationContext,
 } from "@azure/functions";
-import {
-  hasValidApiKey,
-  NOTIFICATION_API_KEY_ENV,
-} from "./api-key.js";
+import { hasValidApiKey } from "./api-key.js";
 import { ConfigurationError } from "./configuration.js";
 import {
   FanoutError,
@@ -21,7 +18,7 @@ export async function handleNotifyRequest(
   fanOut: (message: string) => Promise<FanoutReport> = fanOutNotification,
   context?: InvocationContext,
 ): Promise<HttpResponseInit> {
-  if (!hasValidApiKey(request, NOTIFICATION_API_KEY_ENV, env)) {
+  if (!hasValidApiKey(request, env)) {
     return {
       status: 401,
       jsonBody: { error: "Unauthorized" },
