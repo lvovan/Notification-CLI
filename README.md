@@ -90,7 +90,9 @@ pnpm smoke:package
 ```
 
 Deployable frontend and API artifacts are written to `dist\web` and
-`dist\api`.
+`dist\api`. The deployed `staticwebapp.config.json` declares the prebuilt
+Functions runtime as `node:22`, which is required when `skip_api_build` is
+enabled.
 
 ## Configure Azure
 

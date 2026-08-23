@@ -16,7 +16,12 @@ test("SWA routes protect browser APIs and preserve key-protected senders", async
       resolve("../web/public/staticwebapp.config.json"),
       "utf8",
     ),
-  ) as { routes: Route[] };
+  ) as {
+    platform: { apiRuntime: string };
+    routes: Route[];
+  };
+
+  assert.equal(config.platform.apiRuntime, "node:22");
 
   const route = (path: string) =>
     config.routes.find((candidate) => candidate.route === path);
