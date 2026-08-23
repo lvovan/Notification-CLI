@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <script>
+      (() => {
+        const param = new URLSearchParams(window.location.search).get("scoutTheme");
+        const theme =
+          param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        document.documentElement.setAttribute("data-theme", theme);
+      })();
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#111827" />
+    <meta
+      name="description"
+      content="Receive real-time messages from Notification CLI."
+    />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <title>Notification CLI</title>
+  </head>
+  <body>
+    <main id="auth-gate" class="shell" aria-live="polite">
+      <section class="status-card">
+        <div>
+          <h1>Notification CLI</h1>
+          <strong id="auth-status">Checking account access...</strong>
+          <p id="auth-detail"></p>
+          <p>
+            <a href="/.auth/login/aad?post_login_redirect_uri=/">
+              Sign in with Microsoft
+            </a>
+            ·
+            <a href="/.auth/logout?post_logout_redirect_uri=/">Sign out</a>
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <main id="app" class="shell" hidden>
+      <header>
+        <img class="mark" src="/icon.svg" alt="" aria-hidden="true" />
+        <div>
+          <h1>Notification CLI</h1>
+          <p class="subtitle">Real-time messages from your tools</p>
+        </div>
+      </header>
+
+      <section class="status-card" aria-live="polite">
+        <span id="status-dot" class="status-dot"></span>
+        <div>
+          <strong id="status">Connecting...</strong>
+          <p id="status-detail">Establishing a secure connection</p>
+        </div>
+      </section>
+
+      <section class="push-card" aria-labelledby="push-title">
+        <div>
+          <h2 id="push-title">Background notifications</h2>
+          <p>
+            Receive notifications even when Notification CLI is not open.
+          </p>
+        </div>
+        <div class="push-actions">
+          <button id="enable-notifications" type="button">
+            Enable notifications
+          </button>
+          <button id="disable-notifications" type="button" hidden>
+            Disable notifications
+          </button>
+        </div>
+        <p
+          id="push-status"
+          class="push-status"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        ></p>
+      </section>
+
+      <section class="messages" aria-labelledby="messages-title">
+        <div class="section-heading">
+          <h2 id="messages-title">Messages</h2>
+          <button id="clear" class="quiet-button" type="button">Clear</button>
+        </div>
+        <ol id="message-list">
+          <li id="empty-state" class="empty-state">
+            <span>Ready and listening</span>
+            New notifications will appear here.
+          </li>
+        </ol>
+      </section>
+
+      <footer>Notification CLI - (C) Luc Vo Van, 2026 - Built with AI</footer>
+    </main>
+    <script type="module">
+      const gate = document.querySelector("#auth-gate");
+      const app = document.querySelector("#app");
+      const status = document.querySelector("#auth-status");
+      const detail = document.querySelector("#auth-detail");
+
+      try {
+        const response = await fetch("/api/session", {
+          credentials: "same-origin",
+          headers: { Accept: "application/json" },
+        });
+        const session = await response.json();
+        if (response.ok && session.authorized) {
+          gate.hidden = true;
+          app.hidden = false;
+          await import("/src/main.ts");
+        } else {
+          status.textContent = "Account not authorized";
+          detail.textContent =
+            session.error ?? "Sign in with an authorized Microsoft account.";
+        }
+      } catch {
+        status.textContent = "Unable to verify account access";
+        detail.textContent = "Sign out, then sign in again to retry.";
+      }
+    </script>
+  </body>
+</html>

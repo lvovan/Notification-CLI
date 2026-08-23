@@ -1,0 +1,98 @@
+name: Deploy Notification CLI Backend
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-cli:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.24.x"
+          cache-dependency-path: apps/cli/go.mod
+
+      - name: Test CLI
+        working-directory: apps/cli
+        run: go test ./...
+
+      - name: Build CLI
+        shell: pwsh
+        working-directory: apps/cli
+        run: |
+          $buildVersion = (Get-Date).ToUniversalTime().ToString("yyyyMMdd.HHmmss")
+          New-Item -ItemType Directory -Force -Path ..\..\artifacts | Out-Null
+          go build -trimpath -ldflags "-s -w -X main.version=$buildVersion" -o ..\..\artifacts\notify.exe .
+
+      - name: Install WiX
+        run: dotnet tool install --global wix --version 5.0.2
+
+      - name: Build MSI installer
+        shell: pwsh
+        run: |
+          $msiBuild = [int]$env:GITHUB_RUN_NUMBER % 65535
+          $productVersion = "1.0.$msiBuild"
+          wix build -arch x64 `
+            -d ProductVersion=$productVersion `
+            -d NotifyExecutable="$pwd\artifacts\notify.exe" `
+            -o artifacts\NotificationCLI-x64.msi `
+            installer\NotificationCLI.wxs
+
+      - name: Upload CLI installer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: NotificationCLI-x64
+          path: |
+            artifacts/notify.exe
+            artifacts/NotificationCLI-x64.msi
+          if-no-files-found: error
+
+  deploy:
+    needs: build-cli
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Set up pnpm
+        run: npm install --global pnpm@10.34.5
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check application
+        run: |
+          pnpm check
+          pnpm test
+
+      - name: Build application
+        run: |
+          pnpm build
+          pnpm package
+          pnpm smoke:package
+
+      - name: Deploy Static Web App
+        uses: Azure/static-web-apps-deploy@4d27395796ac319302594769cfe812bd207490b1 # v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          action: upload
+          app_location: dist/web
+          api_location: dist/api
+          output_location: ""
+          skip_app_build: true
+          skip_api_build: true

@@ -1,0 +1,23 @@
+{
+  "name": "notification-cli-workspace",
+  "private": true,
+  "packageManager": "pnpm@10.34.5",
+  "scripts": {
+    "build": "pnpm --filter @notification-cli/api build && pnpm --filter @notification-cli/web build",
+    "check": "pnpm --filter @notification-cli/api check && pnpm --filter @notification-cli/web check",
+    "test": "pnpm --filter @notification-cli/api test",
+    "package": "node scripts/package.mjs",
+    "smoke:package": "node scripts/smoke-package.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.8.0",
+    "vite": "^7.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

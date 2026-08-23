@@ -1,0 +1,13 @@
+{
+  "name": "@notification-cli/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "check": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "vite": "^7.0.0"
+  }
+}

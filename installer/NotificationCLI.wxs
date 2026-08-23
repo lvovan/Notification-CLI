@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Notification CLI"
+    Manufacturer="Luc Vo Van"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="92E733DB-36E5-4CBF-B7A5-6B350D219523"
+    Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Notification CLI is already installed." />
+
+    <Feature Id="MainFeature">
+      <ComponentRef Id="NotifyExecutable" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Notification CLI" />
+    </StandardDirectory>
+  </Fragment>
+
+  <Fragment>
+    <Component Id="NotifyExecutable" Directory="INSTALLFOLDER" Guid="2DC27661-96C7-4683-A305-80A60F72E37D">
+      <File Id="NotifyExe" Source="$(var.NotifyExecutable)" KeyPath="yes" />
+      <Environment
+        Id="AddInstallFolderToPath"
+        Name="PATH"
+        Value="[INSTALLFOLDER]"
+        Action="set"
+        Part="last"
+        System="yes" />
+    </Component>
+  </Fragment>
+</Wix>
