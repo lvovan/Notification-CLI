@@ -1,5 +1,8 @@
 import type { HttpRequest, HttpResponseInit } from "@azure/functions";
-import { hasValidApiKey } from "./api-key.js";
+import {
+  hasValidApiKey,
+  NOTIFICATION_API_KEY_ENV,
+} from "./api-key.js";
 import {
   FanoutError,
   fanOutNotification,
@@ -12,7 +15,7 @@ export async function handleNotifyRequest(
   env: NodeJS.ProcessEnv = process.env,
   fanOut: (message: string) => Promise<FanoutReport> = fanOutNotification,
 ): Promise<HttpResponseInit> {
-  if (!hasValidApiKey(request, env)) {
+  if (!hasValidApiKey(request, NOTIFICATION_API_KEY_ENV, env)) {
     return {
       status: 401,
       headers: { "WWW-Authenticate": "Bearer" },

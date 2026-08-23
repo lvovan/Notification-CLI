@@ -9,17 +9,25 @@ function requestWithHeaders(values: Record<string, string>) {
 }
 
 test("accepts bearer and x-api-key authentication", () => {
-  const env = { NOTIFICATION_CLI_MCP_API_KEY: "test-key" };
+  const env = {
+    NOTIFICATION_CLI_MCP_API_KEY: "mcp-test-key",
+    NOTIFICATION_CLI_API_KEY: "cli-test-key",
+  };
   assert.equal(
-    isAuthorized(requestWithHeaders({ authorization: "Bearer test-key" }), env),
+    isAuthorized(
+      requestWithHeaders({
+        authorization: `Bearer ${env.NOTIFICATION_CLI_MCP_API_KEY}`,
+      }),
+      env,
+    ),
     true,
   );
   assert.equal(
-    isAuthorized(requestWithHeaders({ "x-api-key": "test-key" }), env),
+    isAuthorized(requestWithHeaders({ "x-api-key": "mcp-test-key" }), env),
     true,
   );
   assert.equal(
-    isAuthorized(requestWithHeaders({ "x-api-key": "wrong" }), env),
+    isAuthorized(requestWithHeaders({ "x-api-key": "cli-test-key" }), env),
     false,
   );
 });
@@ -34,7 +42,7 @@ test("rejects malformed bearer authentication", () => {
 
 function toolCallRequest(message: string): HttpRequest {
   return {
-    headers: new Headers({ "x-api-key": "test-key" }),
+    headers: new Headers({ "x-api-key": "mcp-test-key" }),
     json: async () => ({
       jsonrpc: "2.0",
       id: 1,
@@ -59,7 +67,7 @@ test("send_notification uses shared fan-out and reports partial delivery", async
   };
   const accepted = await handleMcpRequest(
     toolCallRequest(" hello "),
-    { NOTIFICATION_CLI_MCP_API_KEY: "test-key" },
+    { NOTIFICATION_CLI_MCP_API_KEY: "mcp-test-key" },
     async (message) => {
       delivered = message;
       return successfulReport;
@@ -83,7 +91,7 @@ test("send_notification uses shared fan-out and reports partial delivery", async
   };
   const partial = await handleMcpRequest(
     toolCallRequest("hello"),
-    { NOTIFICATION_CLI_MCP_API_KEY: "test-key" },
+    { NOTIFICATION_CLI_MCP_API_KEY: "mcp-test-key" },
     async () => {
       throw new FanoutError(failedReport);
     },

@@ -55,7 +55,7 @@ environment instead of passing secrets on the command line:
 
 ```powershell
 $env:NOTIFICATION_CLI_API_URL = "https://<your-static-web-app>.azurestaticapps.net"
-$env:NOTIFICATION_CLI_API_KEY = "<same-value-as-NOTIFICATION_CLI_MCP_API_KEY>"
+$env:NOTIFICATION_CLI_API_KEY = "<notification-api-key>"
 notify --configure
 Remove-Item Env:NOTIFICATION_CLI_API_URL
 Remove-Item Env:NOTIFICATION_CLI_API_KEY
@@ -102,7 +102,8 @@ set:
 | Variable | Purpose |
 | --- | --- |
 | `NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING` | Server-side Web PubSub connection used to negotiate browser access and send MCP messages |
-| `NOTIFICATION_CLI_MCP_API_KEY` | Long random key required by the MCP and CLI notification endpoints |
+| `NOTIFICATION_CLI_API_KEY` | Long random key used only by the Go CLI `/api/notify` endpoint |
+| `NOTIFICATION_CLI_MCP_API_KEY` | Separate long random key used only by the `/api/mcp` endpoint |
 | `AUTHORIZED_USERS` | Semicolon-separated Microsoft account email addresses allowed to use the browser app |
 | `NOTIFICATION_CLI_VAPID_PUBLIC_KEY` | URL-safe VAPID public key returned to authorized browsers |
 | `NOTIFICATION_CLI_VAPID_PRIVATE_KEY` | Secret VAPID private key used only by the API |
@@ -218,6 +219,9 @@ packages the web application, and deploys the frontend and API.
   variables are embedded in browser assets.
 - Keep the VAPID private key and Azure Storage connection string server-side.
 - Use a unique, randomly generated MCP API key and rotate it if exposed.
+- Use distinct random values for `NOTIFICATION_CLI_API_KEY` and
+  `NOTIFICATION_CLI_MCP_API_KEY`; each endpoint rejects the other endpoint's
+  key.
 - Keep `AUTHORIZED_USERS` limited to the Microsoft accounts that should receive
   browser notifications. An authenticated account is not sufficient by itself.
 - Keep the local CLI configuration file private to your user account.

@@ -242,9 +242,9 @@ test("notify uses API-key auth, validates JSON, and reports partial failure", as
   const accepted = await handleNotifyRequest(
     request(
       { message: " hello " },
-      { authorization: "Bearer test-key" },
+      { "x-api-key": "cli-test-key" },
     ),
-    { NOTIFICATION_CLI_MCP_API_KEY: "test-key" },
+    { NOTIFICATION_CLI_API_KEY: "cli-test-key" },
     async (message) => {
       deliveredMessage = message;
       return {
@@ -261,14 +261,17 @@ test("notify uses API-key auth, validates JSON, and reports partial failure", as
   assert.equal(deliveredMessage, "hello");
 
   const denied = await handleNotifyRequest(
-    request({ message: "hello" }, { "x-api-key": "wrong" }),
-    { NOTIFICATION_CLI_MCP_API_KEY: "test-key" },
+    request({ message: "hello" }, { "x-api-key": "mcp-test-key" }),
+    {
+      NOTIFICATION_CLI_API_KEY: "cli-test-key",
+      NOTIFICATION_CLI_MCP_API_KEY: "mcp-test-key",
+    },
   );
   assert.equal(denied.status, 401);
 
   const invalid = await handleNotifyRequest(
-    request({ message: "" }, { "x-api-key": "test-key" }),
-    { NOTIFICATION_CLI_MCP_API_KEY: "test-key" },
+    request({ message: "" }, { "x-api-key": "cli-test-key" }),
+    { NOTIFICATION_CLI_API_KEY: "cli-test-key" },
   );
   assert.equal(invalid.status, 400);
 
@@ -281,8 +284,8 @@ test("notify uses API-key auth, validates JSON, and reports partial failure", as
     errors: ["Web Push delivery failed"],
   };
   const partial = await handleNotifyRequest(
-    request({ message: "hello" }, { "x-api-key": "test-key" }),
-    { NOTIFICATION_CLI_MCP_API_KEY: "test-key" },
+    request({ message: "hello" }, { "x-api-key": "cli-test-key" }),
+    { NOTIFICATION_CLI_API_KEY: "cli-test-key" },
     async () => {
       throw new FanoutError(report);
     },

@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { HttpRequest } from "@azure/functions";
 
 export const MCP_API_KEY_ENV = "NOTIFICATION_CLI_MCP_API_KEY";
+export const NOTIFICATION_API_KEY_ENV = "NOTIFICATION_CLI_API_KEY";
 
 function secureEqual(actual: string | null, expected: string): boolean {
   if (actual === null) {
@@ -17,11 +18,12 @@ function secureEqual(actual: string | null, expected: string): boolean {
 
 export function hasValidApiKey(
   request: Pick<HttpRequest, "headers">,
+  environmentVariable: string,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  const configuredKey = env[MCP_API_KEY_ENV];
+  const configuredKey = env[environmentVariable];
   if (!configuredKey) {
-    throw new Error(`${MCP_API_KEY_ENV} is not configured.`);
+    throw new Error(`${environmentVariable} is not configured.`);
   }
 
   const authorization = request.headers.get("authorization");

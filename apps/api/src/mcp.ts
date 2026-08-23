@@ -70,7 +70,7 @@ export function isAuthorized(
   request: Pick<HttpRequest, "headers">,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return hasValidApiKey(request, env);
+  return hasValidApiKey(request, MCP_API_KEY_ENV, env);
 }
 
 export async function handleMcpRequest(
