@@ -48,7 +48,6 @@ test("the clear notification control is not rendered or wired", async () => {
   assert.ok(!html.includes('id="clear"'));
   assert.ok(!html.includes("quiet-button"));
   assert.ok(!main.includes("clearButton"));
-  assert.ok(!main.includes("replaceChildren(emptyState)"));
   assert.ok(!style.includes(".quiet-button"));
 });
 

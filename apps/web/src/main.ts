@@ -51,6 +51,7 @@ const pushStatus = requiredElement("push-status");
 const metricsStatus = requiredElement("metrics-status");
 const messagesStatus = requiredElement("messages-status");
 const messageListSentinel = requiredElement("message-list-sentinel");
+const refreshMessages = requiredElement<HTMLButtonElement>("refresh-messages");
 const statusCard = requiredElement<HTMLElement>("status").closest(
   ".status-card",
 );
@@ -79,6 +80,7 @@ let refreshing = false;
 let pushBusy = false;
 let notificationHistoryCursor: string | null | undefined;
 let notificationHistoryLoading = false;
+let notificationHistoryGeneration = 0;
 let notificationHistoryObserver: IntersectionObserver | undefined;
 const displayedNotificationIds = new Set<string>();
 
@@ -308,6 +310,7 @@ async function loadNotificationHistory(): Promise<void> {
   }
 
   notificationHistoryLoading = true;
+  const generation = notificationHistoryGeneration;
   const isFirstPage = notificationHistoryCursor === undefined;
   messagesStatus.textContent = isFirstPage
     ? "Loading notifications..."
@@ -332,6 +335,10 @@ async function loadNotificationHistory(): Promise<void> {
       nextCursor?: string | null;
       error?: unknown;
     };
+    // A refresh started while this page was in flight, so it is now stale.
+    if (generation !== notificationHistoryGeneration) {
+      return;
+    }
     if (!response.ok) {
       throw new SessionAwareError(
         typeof body.error === "string"
@@ -354,9 +361,13 @@ async function loadNotificationHistory(): Promise<void> {
       shouldLoadNextPage = isHistorySentinelNearViewport();
     }
   } catch (error) {
-    setHistoryError(error, isFirstPage);
+    if (generation === notificationHistoryGeneration) {
+      setHistoryError(error, isFirstPage);
+    }
   } finally {
-    notificationHistoryLoading = false;
+    if (generation === notificationHistoryGeneration) {
+      notificationHistoryLoading = false;
+    }
   }
 
   if (shouldLoadNextPage) {
@@ -374,6 +385,29 @@ function watchNotificationHistoryPaging(): void {
     { rootMargin: "160px 0px" },
   );
   notificationHistoryObserver.observe(messageListSentinel);
+}
+
+/**
+ * Discards the rendered history and pages it in again from the newest entry,
+ * so anything missed while the socket was down shows up.
+ */
+async function reloadNotificationHistory(): Promise<void> {
+  refreshMessages.disabled = true;
+  // Invalidates any page still in flight so it cannot repopulate the list.
+  notificationHistoryGeneration += 1;
+  notificationHistoryLoading = false;
+  displayedNotificationIds.clear();
+  messageList.replaceChildren(emptyState);
+  notificationHistoryCursor = undefined;
+  // Paging disconnects itself at the end of the list, so it must restart.
+  notificationHistoryObserver?.disconnect();
+  watchNotificationHistoryPaging();
+
+  try {
+    await Promise.all([loadNotificationHistory(), refreshMetrics()]);
+  } finally {
+    refreshMessages.disabled = false;
+  }
 }
 
 /**
@@ -745,6 +779,9 @@ async function registerServiceWorker(): Promise<void> {
   }
 }
 
+refreshMessages.addEventListener("click", () => {
+  void reloadNotificationHistory();
+});
 toggleNotifications.addEventListener("click", () => {
   void (toggleNotifications.getAttribute("aria-pressed") === "true"
     ? disablePushNotifications()

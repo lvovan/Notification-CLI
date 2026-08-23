@@ -24,6 +24,7 @@
   --cp-sheen: rgba(255, 255, 255, 0.55);
   --cp-highlight: rgba(177, 31, 75, 0.12);
   --header-mark-size: 3rem;
+  --section-action-size: 1.75rem;
   /* Also the gap above the metrics, so the two spacings stay identical. */
   --metrics-gap: 0.4rem;
   font-family:
@@ -349,7 +350,38 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.75rem;
   margin-bottom: 0.8rem;
+}
+
+/* The heading and its action share a height so the row reads as one line. */
+.section-heading > * {
+  display: flex;
+  height: var(--section-action-size);
+  align-items: center;
+}
+
+.icon-button {
+  justify-content: center;
+  width: var(--section-action-size);
+  padding: 0;
+  border: 1px solid var(--cp-border);
+  border-radius: 50%;
+  color: var(--cp-text);
+  background: var(--cp-surface);
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.icon-button:hover:not(:disabled),
+.icon-button:focus-visible {
+  border-color: var(--cp-accent);
+}
+
+.icon-button:disabled {
+  cursor: progress;
+  opacity: 0.5;
 }
 
 h2 {
