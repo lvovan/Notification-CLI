@@ -15,18 +15,15 @@ function ruleBody(style: string, selector: string): string {
   return match[2] ?? "";
 }
 
-test("the logo and the account block share one height token", async () => {
+test("the logo and the title block share one height token", async () => {
   const style = await readFile(stylePath, "utf8");
 
   // Both must read the same variable, otherwise the header stops lining up.
   assert.match(ruleBody(style, ".mark"), /height:\s*var\(--header-mark-size\)/);
+  assert.match(ruleBody(style, ".brand"), /height:\s*var\(--header-mark-size\)/);
   assert.match(
     ruleBody(style, ".account"),
     /height:\s*var\(--header-mark-size\)/,
-  );
-  assert.match(
-    ruleBody(style, ".account"),
-    /justify-content:\s*space-between/,
   );
 });
 
@@ -46,31 +43,30 @@ test("the metrics heading is gone and the list is named Notifications", async ()
 
   assert.ok(!html.includes('id="metrics-title"'));
   assert.match(html, /<section class="metrics-card" aria-label="[^"]+"/);
-  assert.match(html, /<h2 id="messages-title">Notifications<\/h2>/);
+  assert.match(html, /<h2 id="messages-title">[\s\S]*?Notifications[\s\S]*?<\/h2>/);
 });
 
-test("the refresh control shares the heading row and its height", async () => {
+test("the notifications heading doubles as the refresh control", async () => {
   const [html, style] = await Promise.all([
     readFile(htmlPath, "utf8"),
     readFile(stylePath, "utf8"),
   ]);
 
-  // The button must live inside the heading row to line up with the title.
+  // The trigger is the heading itself, so there is no separate icon button.
   const heading =
     /<div class="section-heading">([\s\S]*?)<\/div>/.exec(html)?.[1] ?? "";
-  assert.match(heading, /<h2 id="messages-title">/);
-  assert.match(heading, /id="refresh-messages"/);
-  assert.match(heading, /aria-label="[^"]+"/);
+  assert.match(
+    heading,
+    /<h2 id="messages-title">\s*<button id="refresh-messages" class="heading-button"/,
+  );
+  assert.ok(!style.includes(".icon-button"));
 
-  // Both children are sized from one token, so the row cannot drift.
-  assert.match(
-    ruleBody(style, ".section-heading > \\*"),
-    /height:\s*var\(--section-action-size\)/,
-  );
-  assert.match(
-    ruleBody(style, ".icon-button"),
-    /width:\s*var\(--section-action-size\)/,
-  );
+  // Underlined only: color, font and size stay inherited from the heading.
+  const button = ruleBody(style, ".heading-button");
+  assert.match(button, /font:\s*inherit/);
+  assert.match(button, /color:\s*inherit/);
+  assert.match(button, /text-decoration:\s*underline/);
+  assert.ok(!/font-size:/.test(button));
 });
 
 test("refreshing restarts paging from the newest notification", async () => {

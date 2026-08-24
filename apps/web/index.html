@@ -42,12 +42,11 @@
     <main id="app" class="shell" hidden>
       <header>
         <img class="mark" src="/icon.svg" alt="" aria-hidden="true" />
-        <div>
+        <div class="brand">
           <h1>Notification CLI</h1>
           <p class="subtitle">Your live tool updates</p>
         </div>
         <div class="account">
-          <span class="account-email" id="account-email"></span>
           <a
             class="logout-button"
             href="/.auth/logout?post_logout_redirect_uri=/"
@@ -61,6 +60,7 @@
         <span id="status-dot" class="status-dot"></span>
         <div class="status-text">
           <strong id="status">Connecting...</strong>
+          <p class="push-status" id="account-email"></p>
           <p
             id="push-status"
             class="push-status"
@@ -110,16 +110,11 @@
 
       <section class="messages" aria-labelledby="messages-title">
         <div class="section-heading">
-          <h2 id="messages-title">Notifications</h2>
-          <button
-            id="refresh-messages"
-            class="icon-button"
-            type="button"
-            aria-label="Refresh notifications"
-            title="Refresh notifications"
-          >
-            🔄️
-          </button>
+          <h2 id="messages-title">
+            <button id="refresh-messages" class="heading-button" type="button">
+              Notifications
+            </button>
+          </h2>
         </div>
         <ol id="message-list">
           <li id="empty-state" class="empty-state">
@@ -151,10 +146,8 @@
         });
         const session = await response.json();
         if (response.ok && session.authorized) {
-          const email = document.querySelector("#account-email");
-          email.textContent = session.email ?? "";
-          // The header truncates long addresses, so keep the full one on hover.
-          email.title = session.email ?? "";
+          document.querySelector("#account-email").textContent =
+            session.email ?? "";
           gate.hidden = true;
           app.hidden = false;
           await import("/src/main.ts");

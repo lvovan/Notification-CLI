@@ -51,15 +51,20 @@ test("the clear notification control is not rendered or wired", async () => {
   assert.ok(!style.includes(".quiet-button"));
 });
 
-test("the account email is styled as smaller secondary text", async () => {
-  const style = await readFile(stylePath, "utf8");
-  const match = style.match(
-    /\.account-email\s*\{[^}]*font-size:\s*([0-9.]+)rem/s,
-  );
+test("the account email shares the connection panel's secondary style", async () => {
+  const html = await readFile(htmlPath, "utf8");
 
-  assert.ok(match, "missing account-email font-size");
-  assert.ok(
-    Number(match[1]) < 0.75,
-    "account email should be smaller than before",
+  // It sits between the connection state and the notification state, styled
+  // like the latter rather than as its own header treatment.
+  const statusText =
+    /<div class="status-text">([\s\S]*?)<\/div>/.exec(html)?.[1] ?? "";
+  const order = ['id="status"', 'id="account-email"', 'id="push-status"'].map(
+    (marker) => statusText.indexOf(marker),
   );
+  assert.ok(
+    order.every((index) => index >= 0),
+    "the connection panel is missing one of its lines",
+  );
+  assert.deepEqual(order, [...order].sort((a, b) => a - b));
+  assert.match(statusText, /class="push-status" id="account-email"/);
 });

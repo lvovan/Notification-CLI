@@ -24,7 +24,6 @@
   --cp-sheen: rgba(255, 255, 255, 0.55);
   --cp-highlight: rgba(177, 31, 75, 0.12);
   --header-mark-size: 3rem;
-  --section-action-size: 1.75rem;
   /* Also the gap above the metrics, so the two spacings stay identical. */
   --metrics-gap: 0.4rem;
   font-family:
@@ -90,31 +89,20 @@ header {
   margin-bottom: 2rem;
 }
 
-header > div:first-of-type {
+/* The title block matches the logo height so the header reads as one band. */
+.brand {
+  display: flex;
+  height: var(--header-mark-size);
+  flex-direction: column;
+  justify-content: center;
   min-width: 0;
 }
 
-/* The account block matches the logo height so the header reads as one band. */
 .account {
   display: flex;
   height: var(--header-mark-size);
-  max-width: 40%;
   margin-left: auto;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: space-between;
-  min-width: 0;
-}
-
-.account-email {
-  max-width: 100%;
-  color: var(--cp-text-muted);
-  font-size: 0.68rem;
-  line-height: 1.1;
-  text-align: right;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  align-items: center;
 }
 
 .logout-button {
@@ -155,6 +143,7 @@ p {
 h1 {
   font-size: clamp(1.45rem, 4vw, 1.85rem);
   letter-spacing: -0.03em;
+  line-height: 1;
 }
 
 .subtitle,
@@ -163,8 +152,10 @@ time {
   color: var(--cp-text-muted);
 }
 
+/* The title and subtitle together fill the .brand box, matching the logo. */
 .subtitle {
-  margin-top: 0.25rem;
+  margin-top: 0;
+  line-height: 1.15;
 }
 
 .status-card {
@@ -354,32 +345,20 @@ a {
   margin-bottom: 0.8rem;
 }
 
-/* The heading and its action share a height so the row reads as one line. */
-.section-heading > * {
-  display: flex;
-  height: var(--section-action-size);
-  align-items: center;
-}
-
-.icon-button {
-  justify-content: center;
-  width: var(--section-action-size);
+/* Reads as the section title; underlined only, to hint it reloads the list. */
+.heading-button {
   padding: 0;
-  border: 1px solid var(--cp-border);
-  border-radius: 50%;
-  color: var(--cp-text);
-  background: var(--cp-surface);
-  font-size: 0.85rem;
-  line-height: 1;
+  border: 0;
+  color: inherit;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-decoration: underline;
   cursor: pointer;
 }
 
-.icon-button:hover:not(:disabled),
-.icon-button:focus-visible {
-  border-color: var(--cp-accent);
-}
-
-.icon-button:disabled {
+.heading-button:disabled {
   cursor: progress;
   opacity: 0.5;
 }
@@ -444,11 +423,6 @@ footer {
 @media (max-width: 560px) {
   .shell {
     padding-top: 1.5rem;
-  }
-
-  /* Keep the title on one line; the full address stays in the tooltip. */
-  .account {
-    max-width: 6.5rem;
   }
 
   .app-actions {
