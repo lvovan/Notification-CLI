@@ -171,8 +171,8 @@ time {
 }
 
 .status-dot {
-  width: 0.9rem;
-  height: 0.9rem;
+  width: 0.8rem;
+  height: 0.8rem;
   border-radius: 50%;
   background: var(--cp-warning);
   box-shadow: 0 0 0 5px var(--cp-accent-soft);
