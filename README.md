@@ -75,12 +75,23 @@ Remove-Item Env:NOTIFICATION_CLI_API_URL
 Remove-Item Env:NOTIFICATION_CLI_API_KEY
 ```
 
-`--configure` calls `/api/whoami` to confirm the key belongs to a still
-authorized account before it saves anything. A rejected key fails without
-writing the configuration; a valid key is copied to the current user's
-application configuration directory and the resolved account is printed. On
-Windows this is `%LOCALAPPDATA%\Notification CLI\config.json`; on macOS and
-Linux it is under the operating system's user configuration directory.
+`--configure` tests the endpoint with the two environment variables before it
+saves anything, then reports the outcome:
+
+```text
+Testing https://<your-static-web-app>.azurestaticapps.net/api/whoami
+Result:  SUCCESS
+Account: you@example.com
+Saved:   C:\Users\you\AppData\Local\Notification CLI\config.json
+```
+
+The account line is informational — a service that does not report one still
+counts as a working configuration and prints
+`Account: not reported by the service`. A failing test prints
+`Result:  FAILED` with the reason, exits non-zero, and writes nothing. On
+Windows the configuration lives in `%LOCALAPPDATA%\Notification CLI\config.json`;
+on macOS and Linux it is under the operating system's user configuration
+directory.
 
 Cycling the key from the web app's API key section invalidates the old key
 immediately, so afterwards you must re-run `notify --configure` and update

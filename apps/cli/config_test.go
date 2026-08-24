@@ -180,6 +180,30 @@ func TestVerifyAPIKeyRejectsGarbageResponse(t *testing.T) {
 	}
 }
 
+// The account is optional, so a service that omits it still verifies the key.
+func TestVerifyAPIKeyAcceptsMissingEmail(t *testing.T) {
+	for name, body := range map[string]string{
+		"omitted": `{"authorized":true}`,
+		"blank":   `{"email":"   "}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = writer.Write([]byte(body))
+			}))
+			defer server.Close()
+
+			config := configuration{APIURL: server.URL, APIKey: testAPIKey}
+			email, err := verifyAPIKey(t.Context(), server.Client(), config)
+			if err != nil {
+				t.Fatalf("verify API key: %v", err)
+			}
+			if email != "" {
+				t.Fatalf("got email %q, want empty", email)
+			}
+		})
+	}
+}
 func TestVerifyAPIKeyHandlesTransportFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	client := server.Client()

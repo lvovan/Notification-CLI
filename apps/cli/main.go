@@ -23,6 +23,10 @@ const (
 
 var version = "development"
 
+// errAlreadyReported means the failure has been written to the console in a
+// richer form, so main only has to set the exit code.
+var errAlreadyReported = errors.New("already reported")
+
 func banner() string {
 	return fmt.Sprintf("Notification CLI v%s - (C) Luc Vo Van, 2026 - Built with AI", version)
 }
@@ -36,6 +40,9 @@ func usage() {
 	fmt.Println("  notify --version")
 }
 
+// configure tests the endpoint with the connection details taken from the
+// environment, reports the outcome, and only saves the configuration once the
+// test has passed.
 func configure() error {
 	apiURL := strings.TrimSpace(os.Getenv(apiURLEnvironmentVariable))
 	apiKey := os.Getenv(apiKeyEnvironmentVariable)
@@ -46,11 +53,25 @@ func configure() error {
 	if err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
+
+	fmt.Printf("Testing %s\n", verificationEndpoint(config.APIURL))
 	client := &http.Client{Timeout: notificationTimeout}
 	email, err := verifyAPIKey(context.Background(), client, config)
 	if err != nil {
-		return err
+		fmt.Println("Result:  FAILED")
+		fmt.Printf("Reason:  %s\n", err)
+		return errAlreadyReported
 	}
+
+	fmt.Println("Result:  SUCCESS")
+	if email == "" {
+		// The account is optional in the response, so a service that does not
+		// report one is still a working configuration.
+		fmt.Println("Account: not reported by the service")
+	} else {
+		fmt.Printf("Account: %s\n", email)
+	}
+
 	path, err := configurationPath()
 	if err != nil {
 		return err
@@ -58,15 +79,19 @@ func configure() error {
 	if err := saveConfiguration(config, path); err != nil {
 		return err
 	}
-	fmt.Printf("Configuration saved to %s\n", path)
-	fmt.Printf("The API key belongs to %s.\n", email)
+	fmt.Printf("Saved:   %s\n", path)
 	return nil
 }
 
-// verifyAPIKey resolves the configured key to its owner through /api/whoami so
-// a wrong or revoked key is caught before the configuration is written.
+func verificationEndpoint(apiURL string) string {
+	return strings.TrimRight(apiURL, "/") + "/api/whoami"
+}
+
+// verifyAPIKey resolves the configured key through /api/whoami so a wrong or
+// revoked key is caught before the configuration is written. The account email
+// is optional: an empty return value means the service did not report one.
 func verifyAPIKey(ctx context.Context, client *http.Client, config configuration) (string, error) {
-	endpoint := strings.TrimRight(config.APIURL, "/") + "/api/whoami"
+	endpoint := verificationEndpoint(config.APIURL)
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return "", fmt.Errorf("create verification request: %w", err)
@@ -105,10 +130,10 @@ func verifyAPIKey(ctx context.Context, client *http.Client, config configuration
 	var payload struct {
 		Email string `json:"email"`
 	}
-	if err := json.Unmarshal(body, &payload); err != nil || strings.TrimSpace(payload.Email) == "" {
+	if err := json.Unmarshal(body, &payload); err != nil {
 		return "", errors.New("the verification service returned an unexpected response")
 	}
-	return payload.Email, nil
+	return strings.TrimSpace(payload.Email), nil
 }
 
 func sendNotification(message string) error {
@@ -216,7 +241,9 @@ func run(arguments []string) error {
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "notify: %s\n", err)
+		if !errors.Is(err, errAlreadyReported) {
+			fmt.Fprintf(os.Stderr, "notify: %s\n", err)
+		}
 		os.Exit(1)
 	}
 }
