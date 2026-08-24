@@ -1,6 +1,7 @@
 import type { HttpRequest, HttpResponseInit } from "@azure/functions";
 import { authorizeBrowserRequest, browserAuthorizationError } from "./auth.js";
 import { ConfigurationError } from "./configuration.js";
+import { userKey } from "./identity.js";
 import {
   DEFAULT_NOTIFICATION_PAGE_LIMIT,
   MAX_NOTIFICATION_PAGE_LIMIT,
@@ -92,10 +93,17 @@ export async function handleNotificationsRequest(
       headers: NO_STORE,
       jsonBody: {
         retentionDays,
-        ...(await history.list(now(), retentionDays, {
-          limit,
-          ...(cursor !== undefined ? { cursor } : {}),
-        })),
+        // The partition comes from the signed-in principal, never from the
+        // request, so a caller cannot page through another account's history.
+        ...(await history.list(
+          userKey(authorization.email),
+          now(),
+          retentionDays,
+          {
+            limit,
+            ...(cursor !== undefined ? { cursor } : {}),
+          },
+        )),
       },
     };
   } catch (error) {

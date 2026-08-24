@@ -1,5 +1,9 @@
 import { app } from "@azure/functions";
 import {
+  handleApiKeyCycleRequest,
+  handleApiKeyRequest,
+} from "./apikey.js";
+import {
   handleNegotiateRequest,
   handleSessionRequest,
 } from "./browser.js";
@@ -12,6 +16,7 @@ import {
   handlePushConfigRequest,
   handleSavePushSubscription,
 } from "./push.js";
+import { handleWhoamiRequest } from "./whoami.js";
 
 app.http("negotiate", {
   methods: ["GET"],
@@ -75,4 +80,25 @@ app.http("notify", {
   route: "notify",
   handler: (request, context) =>
     handleNotifyRequest(request, undefined, undefined, context),
+});
+
+app.http("apikey", {
+  methods: ["GET"],
+  authLevel: "anonymous",
+  route: "apikey",
+  handler: (request) => handleApiKeyRequest(request),
+});
+
+app.http("apikey-cycle", {
+  methods: ["POST"],
+  authLevel: "anonymous",
+  route: "apikey/cycle",
+  handler: (request) => handleApiKeyCycleRequest(request),
+});
+
+app.http("whoami", {
+  methods: ["GET"],
+  authLevel: "anonymous",
+  route: "whoami",
+  handler: (request) => handleWhoamiRequest(request),
 });

@@ -3,7 +3,8 @@ import type {
   HttpResponseInit,
   InvocationContext,
 } from "@azure/functions";
-import { hasValidApiKey } from "./api-key.js";
+import { resolveApiKeyOwner } from "./api-key.js";
+import type { ApiKeyStore } from "./api-key-storage.js";
 import { ConfigurationError } from "./configuration.js";
 import {
   FanoutError,
@@ -11,18 +12,37 @@ import {
   validateNotificationMessage,
   type FanoutReport,
 } from "./fanout.js";
+import type { NotificationOwner } from "./identity.js";
 
 export async function handleNotifyRequest(
   request: HttpRequest,
   env: NodeJS.ProcessEnv = process.env,
-  fanOut: (message: string) => Promise<FanoutReport> = fanOutNotification,
+  fanOut: (
+    message: string,
+    owner: NotificationOwner,
+  ) => Promise<FanoutReport> = fanOutNotification,
   context?: InvocationContext,
+  keys?: ApiKeyStore | null,
 ): Promise<HttpResponseInit> {
-  if (!hasValidApiKey(request, env)) {
-    return {
-      status: 401,
-      jsonBody: { error: "Unauthorized" },
-    };
+  let owner: NotificationOwner;
+  try {
+    const resolution = await resolveApiKeyOwner(request, env, keys);
+    if (!resolution.authorized) {
+      return {
+        status: 401,
+        jsonBody: { error: "Unauthorized" },
+      };
+    }
+    owner = resolution.owner;
+  } catch (error) {
+    if (error instanceof ConfigurationError) {
+      context?.error(`Notification API misconfigured: ${error.message}`);
+      return {
+        status: 503,
+        jsonBody: { delivered: false, error: error.message },
+      };
+    }
+    throw error;
   }
 
   let value: unknown;
@@ -46,7 +66,7 @@ export async function handleNotifyRequest(
   }
 
   try {
-    const delivery = await fanOut(message);
+    const delivery = await fanOut(message, owner);
     return { status: 200, jsonBody: { delivered: true, delivery } };
   } catch (error) {
     if (error instanceof FanoutError) {

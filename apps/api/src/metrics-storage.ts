@@ -11,8 +11,7 @@ import {
 
 export const NOTIFICATION_METRICS_TABLE = "NotificationMetrics";
 
-const TOTAL_PARTITION_KEY = "totals";
-const TOTAL_ROW_KEY = "all";
+const TOTAL_ROW_KEY = "totals";
 const METRICS_WINDOW_DAYS = 30;
 const MAX_TOTAL_ATTEMPTS = 5;
 
@@ -24,8 +23,8 @@ export interface NotificationCounts {
 }
 
 export interface NotificationMetricsStore {
-  record(sentAt: Date): Promise<void>;
-  counts(now: Date): Promise<NotificationCounts>;
+  record(userKey: string, sentAt: Date): Promise<void>;
+  counts(userKey: string, now: Date): Promise<NotificationCounts>;
 }
 
 interface SentNotificationEntity {
@@ -62,32 +61,34 @@ export class AzureTableNotificationMetricsStore
 {
   constructor(private readonly client: TableClient) {}
 
-  async record(sentAt: Date): Promise<void> {
+  async record(userKey: string, sentAt: Date): Promise<void> {
     await ensureTable(this.client);
     const entity: TableEntity<{ sentAt: number }> = {
-      partitionKey: dayKey(sentAt),
-      // A unique row key keeps concurrent sends from overwriting each other.
-      rowKey: `${sentAt.getTime()}-${randomUUID()}`,
+      partitionKey: userKey,
+      // A readable day-prefixed key keeps counts() a simple range scan, and the
+      // unique id keeps concurrent sends from overwriting each other. No
+      // inversion is needed: metrics are aggregated, never ordered.
+      rowKey: `${dayKey(sentAt)}-${sentAt.getTime()}-${randomUUID()}`,
       sentAt: sentAt.getTime(),
     };
     await this.client.createEntity(entity);
-    await this.incrementTotal();
+    await this.incrementTotal(userKey);
   }
 
   /**
-   * Table Storage has no atomic increment, so the lifetime total is updated
-   * with an ETag precondition and retried when a concurrent send wins.
+   * Table Storage has no atomic increment, so the per-user lifetime total is
+   * updated with an ETag precondition and retried when a concurrent send wins.
    */
-  private async incrementTotal(): Promise<void> {
+  private async incrementTotal(userKey: string): Promise<void> {
     for (let attempt = 0; attempt < MAX_TOTAL_ATTEMPTS; attempt += 1) {
       try {
         const current = await this.client.getEntity<{ count: number }>(
-          TOTAL_PARTITION_KEY,
+          userKey,
           TOTAL_ROW_KEY,
         );
         await this.client.updateEntity(
           {
-            partitionKey: TOTAL_PARTITION_KEY,
+            partitionKey: userKey,
             rowKey: TOTAL_ROW_KEY,
             count: (current.count ?? 0) + 1,
           },
@@ -100,7 +101,7 @@ export class AzureTableNotificationMetricsStore
         if (status === 404) {
           try {
             await this.client.createEntity({
-              partitionKey: TOTAL_PARTITION_KEY,
+              partitionKey: userKey,
               rowKey: TOTAL_ROW_KEY,
               count: 1,
             });
@@ -118,10 +119,10 @@ export class AzureTableNotificationMetricsStore
     throw new Error("Unable to update the notification total.");
   }
 
-  private async readTotal(): Promise<number> {
+  private async readTotal(userKey: string): Promise<number> {
     try {
       const entity = await this.client.getEntity<{ count: number }>(
-        TOTAL_PARTITION_KEY,
+        userKey,
         TOTAL_ROW_KEY,
       );
       return typeof entity.count === "number" ? entity.count : 0;
@@ -133,14 +134,16 @@ export class AzureTableNotificationMetricsStore
     }
   }
 
-  async counts(now: Date): Promise<NotificationCounts> {
+  async counts(userKey: string, now: Date): Promise<NotificationCounts> {
     await ensureTable(this.client);
     const oldest = dayKey(
       new Date(now.getTime() - METRICS_WINDOW_DAYS * DAY_MS),
     );
-    const newest = dayKey(now);
-    // Both bounds are day keys, which also excludes the "totals" partition.
-    const filter = odata`PartitionKey ge ${oldest} and PartitionKey le ${newest}`;
+    // Exclusive upper bound: the day AFTER today, so every one of today's rows
+    // is included. Day keys start with a digit; the "totals" row starts with
+    // 't', which sorts after every digit, so this bound can never scan it.
+    const dayAfterNewest = dayKey(new Date(now.getTime() + DAY_MS));
+    const filter = odata`PartitionKey eq ${userKey} and RowKey ge ${oldest} and RowKey lt ${dayAfterNewest}`;
     const sentAtValues: number[] = [];
     const entities = this.client.listEntities<SentNotificationEntity>({
       queryOptions: { filter, select: ["sentAt"] },
@@ -150,7 +153,7 @@ export class AzureTableNotificationMetricsStore
         sentAtValues.push(entity.sentAt);
       }
     }
-    return countWindows(sentAtValues, now, await this.readTotal());
+    return countWindows(sentAtValues, now, await this.readTotal(userKey));
   }
 }
 

@@ -108,6 +108,46 @@
         ></p>
       </section>
 
+      <section class="apikey-card" aria-label="Personal API key">
+        <div class="apikey-field">
+          <input
+            id="api-key"
+            class="apikey-value"
+            type="text"
+            readonly
+            aria-label="Your personal API key, obfuscated"
+            value=""
+          />
+          <div class="apikey-actions">
+            <button
+              id="copy-api-key"
+              class="apikey-button"
+              type="button"
+              aria-label="Copy API key"
+              title="Copy API key"
+            >
+              📋
+            </button>
+            <button
+              id="cycle-api-key"
+              class="apikey-button"
+              type="button"
+              aria-label="Regenerate API key"
+              title="Regenerate API key"
+            >
+              🔄
+            </button>
+          </div>
+        </div>
+        <p
+          id="api-key-status"
+          class="push-status"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        ></p>
+      </section>
+
       <section class="messages" aria-labelledby="messages-title">
         <div class="section-heading">
           <h2 id="messages-title">

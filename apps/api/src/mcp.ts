@@ -3,7 +3,8 @@ import type {
   HttpResponseInit,
   InvocationContext,
 } from "@azure/functions";
-import { hasValidApiKey, NOTIFICATION_API_KEY_ENV } from "./api-key.js";
+import { resolveApiKeyOwner } from "./api-key.js";
+import type { ApiKeyStore } from "./api-key-storage.js";
 import { ConfigurationError } from "./configuration.js";
 import {
   FanoutError,
@@ -11,8 +12,7 @@ import {
   validateNotificationMessage,
   type FanoutReport,
 } from "./fanout.js";
-
-export { NOTIFICATION_API_KEY_ENV };
+import type { NotificationOwner } from "./identity.js";
 
 interface JsonRpcRequest {
   jsonrpc: "2.0";
@@ -71,24 +71,35 @@ function jsonRpcError(
   };
 }
 
-export function isAuthorized(
-  request: Pick<HttpRequest, "headers">,
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return hasValidApiKey(request, env);
-}
-
 export async function handleMcpRequest(
   request: HttpRequest,
   env: NodeJS.ProcessEnv = process.env,
-  fanOut: (message: string) => Promise<FanoutReport> = fanOutNotification,
+  fanOut: (
+    message: string,
+    owner: NotificationOwner,
+  ) => Promise<FanoutReport> = fanOutNotification,
   context?: InvocationContext,
+  keys?: ApiKeyStore | null,
 ): Promise<HttpResponseInit> {
-  if (!isAuthorized(request, env)) {
-    return {
-      status: 401,
-      jsonBody: { error: "Unauthorized" },
-    };
+  let owner: NotificationOwner;
+  try {
+    const resolution = await resolveApiKeyOwner(request, env, keys);
+    if (!resolution.authorized) {
+      return {
+        status: 401,
+        jsonBody: { error: "Unauthorized" },
+      };
+    }
+    owner = resolution.owner;
+  } catch (error) {
+    if (error instanceof ConfigurationError) {
+      context?.error(`Notification API misconfigured: ${error.message}`);
+      return {
+        status: 503,
+        jsonBody: { error: error.message },
+      };
+    }
+    throw error;
   }
 
   let rpcRequest: JsonRpcRequest;
@@ -131,7 +142,7 @@ export async function handleMcpRequest(
       }
 
       try {
-        await fanOut(message);
+        await fanOut(message, owner);
       } catch (error) {
         if (error instanceof FanoutError) {
           context?.error(

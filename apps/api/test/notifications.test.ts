@@ -3,13 +3,11 @@ import test from "node:test";
 import type { HttpRequest } from "@azure/functions";
 import { ConfigurationError } from "../src/configuration.js";
 import { fanOutNotification } from "../src/fanout.js";
+import { notificationOwner, userGroup, userKey } from "../src/identity.js";
 import {
-  AzureTableNotificationHistoryStore,
   DEFAULT_RETENTION_DAYS,
   DEFAULT_NOTIFICATION_PAGE_LIMIT,
   parseRetentionDays,
-  parseNotificationCursor,
-  retentionCutoffDay,
   type NotificationHistoryStore,
   type NotificationListOptions,
   type NotificationPage,
@@ -19,8 +17,10 @@ import {
 import { handleNotificationsRequest } from "../src/notifications.js";
 
 const NOW = new Date("2026-03-15T12:00:00.000Z");
+const OWNER = "user@example.com";
+const OTHER = "someone.else@example.com";
 
-function principalHeader(email = "user@example.com"): string {
+function principalHeader(email = OWNER): string {
   return Buffer.from(
     JSON.stringify({
       identityProvider: "aad",
@@ -42,45 +42,64 @@ function request(
   } as unknown as HttpRequest;
 }
 
-function compareNewestFirst(
-  left: StoredNotification,
-  right: StoredNotification,
-): number {
-  const sentAtOrder = right.sentAt - left.sentAt;
-  if (sentAtOrder !== 0) {
-    return sentAtOrder;
-  }
-  if (left.id === right.id) {
-    return 0;
-  }
-  return left.id > right.id ? -1 : 1;
+function signedIn(
+  email = OWNER,
+  url = "https://example.com/api/notifications",
+): HttpRequest {
+  return request({ "x-ms-client-principal": principalHeader(email) }, url);
 }
 
-class MemoryHistoryStore implements NotificationHistoryStore {
-  readonly appended: StoredNotification[] = [];
-  readonly pruned: Array<{ now: Date; retentionDays: number }> = [];
+function notification(
+  id: string,
+  sentAt: number,
+  body = id,
+): StoredNotification {
+  return { id, title: "Notification CLI", body, sentAt };
+}
 
-  async append(notification: StoredNotification): Promise<void> {
-    this.appended.push(notification);
+/**
+ * Partitions by user exactly as the table store does, so an endpoint that
+ * forgot to scope its query surfaces here rather than in production. Paging
+ * treats the cursor as opaque, keeping these endpoint tests independent of
+ * how the store encodes it.
+ */
+class MemoryHistoryStore implements NotificationHistoryStore {
+  readonly partitions = new Map<string, StoredNotification[]>();
+  readonly pruned: Array<{ userKey: string; now: Date; retentionDays: number }> =
+    [];
+
+  async append(
+    partition: string,
+    entry: StoredNotification,
+  ): Promise<void> {
+    const existing = this.partitions.get(partition) ?? [];
+    existing.push(entry);
+    this.partitions.set(partition, existing);
+  }
+
+  entries(partition: string): StoredNotification[] {
+    return [...(this.partitions.get(partition) ?? [])].sort((left, right) =>
+      right.sentAt === left.sentAt
+        ? right.id.localeCompare(left.id)
+        : right.sentAt - left.sentAt,
+    );
   }
 
   async list(
+    partition: string,
     _now: Date,
     _retentionDays: number,
     options: NotificationListOptions = {},
   ): Promise<NotificationPage> {
-    const cursor =
-      options.cursor === undefined ? undefined : parseNotificationCursor(options.cursor);
+    const ordered = this.entries(partition);
     const limit = options.limit ?? DEFAULT_NOTIFICATION_PAGE_LIMIT;
-    const page = [...this.appended]
-      .sort(compareNewestFirst)
-      .filter(
-        (notification) =>
-          !cursor ||
-          notification.sentAt < cursor.sentAt ||
-          (notification.sentAt === cursor.sentAt && notification.id < cursor.id),
-      )
-      .slice(0, limit + 1);
+    const start =
+      options.cursor === undefined
+        ? 0
+        : ordered.findIndex(
+            (entry) => notificationCursor(entry) === options.cursor,
+          ) + 1;
+    const page = ordered.slice(start, start + limit + 1);
     const notifications = page.slice(0, limit);
     return {
       notifications,
@@ -91,11 +110,25 @@ class MemoryHistoryStore implements NotificationHistoryStore {
     };
   }
 
-  async prune(now: Date, retentionDays: number): Promise<number> {
-    this.pruned.push({ now, retentionDays });
+  async prune(
+    partition: string,
+    now: Date,
+    retentionDays: number,
+  ): Promise<number> {
+    this.pruned.push({ userKey: partition, now, retentionDays });
     return 3;
   }
 }
+
+const noMetrics = {
+  record: async () => undefined,
+  counts: async () => ({
+    last24Hours: 0,
+    last7Days: 0,
+    last30Days: 0,
+    total: 0,
+  }),
+};
 
 test("retention defaults to a week and rejects nonsense values", () => {
   assert.equal(parseRetentionDays(undefined), DEFAULT_RETENTION_DAYS);
@@ -112,166 +145,45 @@ test("retention defaults to a week and rejects nonsense values", () => {
   }
 });
 
-test("listing and pruning agree on the retention cutoff day", () => {
-  assert.equal(retentionCutoffDay(NOW, 7), "2026-03-08");
-  assert.equal(retentionCutoffDay(NOW, 1), "2026-03-14");
-});
-
-test("pruning deletes only partitions older than the cutoff", async () => {
-  const rows = [
-    { partitionKey: "2026-03-01", rowKey: "a" },
-    { partitionKey: "2026-03-07", rowKey: "b" },
-  ];
-  const filters: string[] = [];
-  const deleted: string[] = [];
-  const client = {
-    createTable: async () => undefined,
-    listEntities: (options: { queryOptions: { filter: string } }) => {
-      filters.push(options.queryOptions.filter);
-      return {
-        async *[Symbol.asyncIterator]() {
-          yield* rows;
-        },
-      };
-    },
-    deleteEntity: async (partitionKey: string, rowKey: string) => {
-      deleted.push(`${partitionKey}/${rowKey}`);
-      if (rowKey === "b") {
-        // A concurrent sweep may have removed the row already.
-        throw Object.assign(new Error("gone"), { statusCode: 404 });
-      }
-    },
-  };
-  const store = new AzureTableNotificationHistoryStore(
-    client as unknown as ConstructorParameters<
-      typeof AzureTableNotificationHistoryStore
-    >[0],
-  );
-
-  assert.equal(await store.prune(NOW, 7), 1);
-  assert.deepEqual(deleted, ["2026-03-01/a", "2026-03-07/b"]);
-  assert.match(filters[0] ?? "", /PartitionKey lt '2026-03-08'/);
-});
-
-test("listing pages retained notifications newest first by day partition", async () => {
-  const filters: string[] = [];
-  const rows = new Map<string, Array<Partial<StoredNotification>>>([
-    [
-      "2026-03-15",
-      [
-        { id: "d15-a", body: "15a", sentAt: Date.parse("2026-03-15T01:00:00Z") },
-        { id: "d15-b", body: "15b", sentAt: Date.parse("2026-03-15T02:00:00Z") },
-      ],
-    ],
-    [
-      "2026-03-14",
-      [
-        { id: "d14-a", body: "14a", sentAt: Date.parse("2026-03-14T01:00:00Z") },
-        { id: "d14-b", body: "14b", sentAt: Date.parse("2026-03-14T02:00:00Z") },
-      ],
-    ],
-    [
-      "2026-03-13",
-      [
-        { id: "d13-a", body: "13a", sentAt: Date.parse("2026-03-13T01:00:00Z") },
-        { id: "d13-b", body: "13b", sentAt: Date.parse("2026-03-13T02:00:00Z") },
-        { id: "broken", body: "dropped" },
-      ],
-    ],
-  ]);
-  const client = {
-    createTable: async () => undefined,
-    listEntities: (options: { queryOptions: { filter: string } }) => {
-      filters.push(options.queryOptions.filter);
-      const partition = /PartitionKey eq '([^']+)'/.exec(
-        options.queryOptions.filter,
-      )?.[1];
-      return {
-        async *[Symbol.asyncIterator]() {
-          yield* partition ? (rows.get(partition) ?? []) : [];
-        },
-      };
-    },
-  };
-  const store = new AzureTableNotificationHistoryStore(
-    client as unknown as ConstructorParameters<
-      typeof AzureTableNotificationHistoryStore
-    >[0],
-  );
-
-  const page = await store.list(NOW, 7, { limit: 5 });
-  assert.deepEqual(
-    page.notifications.map((notification) => notification.id),
-    ["d15-b", "d15-a", "d14-b", "d14-a", "d13-b"],
-  );
-  assert.equal(
-    page.nextCursor,
-    `${Date.parse("2026-03-13T02:00:00Z")}:d13-b`,
-  );
-  assert.deepEqual(filters, [
-    "PartitionKey eq '2026-03-15'",
-    "PartitionKey eq '2026-03-14'",
-    "PartitionKey eq '2026-03-13'",
-  ]);
-
-  filters.length = 0;
-  const nextPage = await store.list(NOW, 7, {
-    limit: 1,
-    cursor: page.nextCursor!,
-  });
-  assert.deepEqual(
-    nextPage.notifications.map((notification) => notification.id),
-    ["d13-a"],
-  );
-  assert.equal(filters[0], "PartitionKey eq '2026-03-13'");
-});
-
-test("sending retains the notification and sweeps expired ones", async () => {
+test("sending retains and sweeps only the sender's own partition", async () => {
   const history = new MemoryHistoryStore();
-  const report = await fanOutNotification("hello", {
-    env: { AUTHORIZED_USERS: "user@example.com" },
+  const groups: string[] = [];
+  const report = await fanOutNotification("hello", notificationOwner(OWNER), {
+    env: {},
     notificationId: () => "notification-id",
     now: () => NOW,
-    webPubSub: { sendToAll: async () => undefined },
+    webPubSub: {
+      group: (name) => {
+        groups.push(name);
+        return { sendToAll: async () => undefined };
+      },
+    },
     store: null as never,
     webPush: null as never,
-    metrics: { record: async () => undefined, counts: async () => ({
-      last24Hours: 0,
-      last7Days: 0,
-      last30Days: 0,
-      total: 0,
-    }) },
+    metrics: noMetrics,
     history,
   });
 
-  assert.deepEqual(history.appended, [
-    {
-      id: "notification-id",
-      title: "Notification CLI",
-      body: "hello",
-      sentAt: NOW.getTime(),
-    },
+  assert.deepEqual(groups, [userGroup(OWNER)]);
+  assert.deepEqual(history.entries(userKey(OWNER)), [
+    notification("notification-id", NOW.getTime(), "hello"),
   ]);
   assert.deepEqual(history.pruned, [
-    { now: NOW, retentionDays: DEFAULT_RETENTION_DAYS },
+    { userKey: userKey(OWNER), now: NOW, retentionDays: DEFAULT_RETENTION_DAYS },
   ]);
+  assert.equal(history.partitions.has(userKey(OTHER)), false);
   assert.equal(report.historyRecorded, true);
   assert.equal(report.historyPruned, 3);
 });
 
 test("a retention failure never fails a delivered notification", async () => {
-  const report = await fanOutNotification("hello", {
-    env: { AUTHORIZED_USERS: "user@example.com" },
+  const report = await fanOutNotification("hello", notificationOwner(OWNER), {
+    env: {},
     now: () => NOW,
-    webPubSub: { sendToAll: async () => undefined },
+    webPubSub: { group: () => ({ sendToAll: async () => undefined }) },
     store: null as never,
     webPush: null as never,
-    metrics: { record: async () => undefined, counts: async () => ({
-      last24Hours: 0,
-      last7Days: 0,
-      last30Days: 0,
-      total: 0,
-    }) },
+    metrics: noMetrics,
     history: {
       append: async () => {
         throw new Error("table storage unavailable");
@@ -289,14 +201,9 @@ test("a retention failure never fails a delivered notification", async () => {
 
 test("the notifications endpoint is gated and reports the retention window", async () => {
   const store = new MemoryHistoryStore();
-  await store.append({
-    id: "one",
-    title: "Notification CLI",
-    body: "hello",
-    sentAt: NOW.getTime(),
-  });
+  await store.append(userKey(OWNER), notification("one", NOW.getTime(), "hello"));
   const env = {
-    AUTHORIZED_USERS: "user@example.com",
+    AUTHORIZED_USERS: `${OWNER};${OTHER}`,
     NOTIFICATION_CLI_RETENTION_DAYS: "14",
   };
 
@@ -309,7 +216,7 @@ test("the notifications endpoint is gated and reports the retention window", asy
   assert.equal(anonymous.status, 401);
 
   const authorized = await handleNotificationsRequest(
-    request({ "x-ms-client-principal": principalHeader() }),
+    signedIn(),
     env,
     store,
     () => NOW,
@@ -317,7 +224,7 @@ test("the notifications endpoint is gated and reports the retention window", asy
   assert.equal(authorized.status, 200);
   assert.deepEqual(authorized.jsonBody, {
     retentionDays: 14,
-    notifications: store.appended,
+    notifications: store.entries(userKey(OWNER)),
     nextCursor: null,
   });
   assert.equal(
@@ -326,15 +233,15 @@ test("the notifications endpoint is gated and reports the retention window", asy
   );
 
   const unconfigured = await handleNotificationsRequest(
-    request({ "x-ms-client-principal": principalHeader() }),
-    { AUTHORIZED_USERS: "user@example.com" },
+    signedIn(),
+    { AUTHORIZED_USERS: OWNER },
     null,
     () => NOW,
   );
   assert.equal(unconfigured.status, 503);
 
   const misconfigured = await handleNotificationsRequest(
-    request({ "x-ms-client-principal": principalHeader() }),
+    signedIn(),
     { ...env, NOTIFICATION_CLI_RETENTION_DAYS: "soon" },
     store,
     () => NOW,
@@ -342,26 +249,72 @@ test("the notifications endpoint is gated and reports the retention window", asy
   assert.equal(misconfigured.status, 503);
 });
 
+test("the notifications endpoint never returns another account's history", async () => {
+  const store = new MemoryHistoryStore();
+  await store.append(userKey(OWNER), notification("mine", NOW.getTime()));
+  await store.append(userKey(OTHER), notification("theirs", NOW.getTime()));
+  const env = { AUTHORIZED_USERS: `${OWNER};${OTHER}` };
+
+  const mine = await handleNotificationsRequest(signedIn(), env, store, () => NOW);
+  const theirs = await handleNotificationsRequest(
+    signedIn(OTHER),
+    env,
+    store,
+    () => NOW,
+  );
+
+  assert.deepEqual(
+    mine.jsonBody.notifications.map((entry: StoredNotification) => entry.id),
+    ["mine"],
+  );
+  assert.deepEqual(
+    theirs.jsonBody.notifications.map((entry: StoredNotification) => entry.id),
+    ["theirs"],
+  );
+});
+
+test("the endpoint ignores any account identifier supplied by the caller", async () => {
+  const store = new MemoryHistoryStore();
+  await store.append(userKey(OTHER), notification("theirs", NOW.getTime()));
+  const env = { AUTHORIZED_USERS: `${OWNER};${OTHER}` };
+
+  for (const url of [
+    `https://example.com/api/notifications?email=${encodeURIComponent(OTHER)}`,
+    `https://example.com/api/notifications?user=${userKey(OTHER)}`,
+    `https://example.com/api/notifications?userKey=${userKey(OTHER)}`,
+  ]) {
+    const response = await handleNotificationsRequest(
+      signedIn(OWNER, url),
+      env,
+      store,
+      () => NOW,
+    );
+    assert.equal(response.status, 200, url);
+    assert.deepEqual(response.jsonBody.notifications, [], url);
+  }
+});
+
 test("the notifications endpoint defaults to a five item page", async () => {
   const store = new MemoryHistoryStore();
   for (let index = 0; index < 6; index += 1) {
-    await store.append({
-      id: `notification-${index}`,
-      title: "Notification CLI",
-      body: `body ${index}`,
-      sentAt: NOW.getTime() - index,
-    });
+    await store.append(
+      userKey(OWNER),
+      notification(`notification-${index}`, NOW.getTime() - index),
+    );
   }
 
   const response = await handleNotificationsRequest(
-    request({ "x-ms-client-principal": principalHeader() }),
-    { AUTHORIZED_USERS: "user@example.com" },
+    signedIn(),
+    { AUTHORIZED_USERS: OWNER },
     store,
     () => NOW,
   );
 
   assert.equal(response.status, 200);
-  assert.equal(response.jsonBody.notifications.length, DEFAULT_NOTIFICATION_PAGE_LIMIT);
+  assert.equal(
+    response.jsonBody.notifications.length,
+    DEFAULT_NOTIFICATION_PAGE_LIMIT,
+  );
   assert.equal(
     response.jsonBody.nextCursor,
     notificationCursor(response.jsonBody.notifications[4]),
@@ -372,56 +325,34 @@ test("a notification cursor returns strictly older pages without gaps", async ()
   const store = new MemoryHistoryStore();
   const expected: StoredNotification[] = [];
   for (let index = 0; index < 12; index += 1) {
-    const notification = {
-      id: `notification-${index.toString().padStart(2, "0")}`,
-      title: "Notification CLI",
-      body: `body ${index}`,
-      sentAt: NOW.getTime() - index,
-    };
-    expected.push(notification);
-    await store.append(notification);
+    const entry = notification(
+      `notification-${index.toString().padStart(2, "0")}`,
+      NOW.getTime() - index,
+    );
+    expected.push(entry);
+    await store.append(userKey(OWNER), entry);
   }
 
-  const first = await handleNotificationsRequest(
-    request(
-      { "x-ms-client-principal": principalHeader() },
-      "https://example.com/api/notifications?limit=5",
-    ),
-    { AUTHORIZED_USERS: "user@example.com" },
-    store,
-    () => NOW,
-  );
-  const second = await handleNotificationsRequest(
-    request(
-      { "x-ms-client-principal": principalHeader() },
-      `https://example.com/api/notifications?limit=5&before=${first.jsonBody.nextCursor}`,
-    ),
-    { AUTHORIZED_USERS: "user@example.com" },
-    store,
-    () => NOW,
-  );
-  const third = await handleNotificationsRequest(
-    request(
-      { "x-ms-client-principal": principalHeader() },
-      `https://example.com/api/notifications?limit=5&before=${second.jsonBody.nextCursor}`,
-    ),
-    { AUTHORIZED_USERS: "user@example.com" },
-    store,
-    () => NOW,
-  );
+  const env = { AUTHORIZED_USERS: OWNER };
+  const pages: StoredNotification[][] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < 3; page += 1) {
+    const url = `https://example.com/api/notifications?limit=5${
+      cursor ? `&before=${cursor}` : ""
+    }`;
+    const response = await handleNotificationsRequest(
+      signedIn(OWNER, url),
+      env,
+      store,
+      () => NOW,
+    );
+    assert.equal(response.status, 200);
+    pages.push(response.jsonBody.notifications);
+    cursor = response.jsonBody.nextCursor;
+  }
 
-  assert.equal(first.status, 200);
-  assert.equal(second.status, 200);
-  assert.equal(third.status, 200);
-  assert.deepEqual(
-    [
-      ...first.jsonBody.notifications,
-      ...second.jsonBody.notifications,
-      ...third.jsonBody.notifications,
-    ],
-    expected,
-  );
-  assert.equal(third.jsonBody.nextCursor, null);
+  assert.deepEqual(pages.flat(), expected);
+  assert.equal(cursor, null);
 });
 
 test("limit and before query validation returns bad request errors", async () => {
@@ -434,8 +365,8 @@ test("limit and before query validation returns bad request errors", async () =>
     "https://example.com/api/notifications?before=not-a-cursor",
   ]) {
     const response = await handleNotificationsRequest(
-      request({ "x-ms-client-principal": principalHeader() }, url),
-      { AUTHORIZED_USERS: "user@example.com" },
+      signedIn(OWNER, url),
+      { AUTHORIZED_USERS: OWNER },
       store,
       () => NOW,
     );
@@ -448,49 +379,30 @@ test("same-millisecond notifications page across the id tiebreak", async () => {
   const store = new MemoryHistoryStore();
   const sentAt = NOW.getTime();
   for (const id of ["a", "b", "c"]) {
-    await store.append({
-      id,
-      title: "Notification CLI",
-      body: id,
-      sentAt,
-    });
+    await store.append(userKey(OWNER), notification(id, sentAt));
   }
 
-  const first = await handleNotificationsRequest(
-    request(
-      { "x-ms-client-principal": principalHeader() },
-      "https://example.com/api/notifications?limit=1",
-    ),
-    { AUTHORIZED_USERS: "user@example.com" },
-    store,
-    () => NOW,
-  );
-  const second = await handleNotificationsRequest(
-    request(
-      { "x-ms-client-principal": principalHeader() },
-      `https://example.com/api/notifications?limit=1&before=${first.jsonBody.nextCursor}`,
-    ),
-    { AUTHORIZED_USERS: "user@example.com" },
-    store,
-    () => NOW,
-  );
-  const third = await handleNotificationsRequest(
-    request(
-      { "x-ms-client-principal": principalHeader() },
-      `https://example.com/api/notifications?limit=1&before=${second.jsonBody.nextCursor}`,
-    ),
-    { AUTHORIZED_USERS: "user@example.com" },
-    store,
-    () => NOW,
-  );
+  const env = { AUTHORIZED_USERS: OWNER };
+  const seen: string[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < 3; page += 1) {
+    const url = `https://example.com/api/notifications?limit=1${
+      cursor ? `&before=${cursor}` : ""
+    }`;
+    const response = await handleNotificationsRequest(
+      signedIn(OWNER, url),
+      env,
+      store,
+      () => NOW,
+    );
+    seen.push(
+      ...response.jsonBody.notifications.map(
+        (entry: StoredNotification) => entry.id,
+      ),
+    );
+    cursor = response.jsonBody.nextCursor;
+  }
 
-  assert.deepEqual(
-    [
-      first.jsonBody.notifications[0].id,
-      second.jsonBody.notifications[0].id,
-      third.jsonBody.notifications[0].id,
-    ],
-    ["c", "b", "a"],
-  );
-  assert.equal(third.jsonBody.nextCursor, null);
+  assert.deepEqual(seen, ["c", "b", "a"]);
+  assert.equal(cursor, null);
 });

@@ -8,6 +8,11 @@ interface PushConfigResponse {
   publicKey: string;
 }
 
+interface ApiKeyResponse {
+  apiKey: string;
+  maskedKey: string;
+}
+
 const METRIC_WINDOWS = [
   "last24Hours",
   "last7Days",
@@ -52,6 +57,10 @@ const metricsStatus = requiredElement("metrics-status");
 const messagesStatus = requiredElement("messages-status");
 const messageListSentinel = requiredElement("message-list-sentinel");
 const refreshMessages = requiredElement<HTMLButtonElement>("refresh-messages");
+const apiKeyValue = requiredElement<HTMLInputElement>("api-key");
+const copyApiKey = requiredElement<HTMLButtonElement>("copy-api-key");
+const cycleApiKey = requiredElement<HTMLButtonElement>("cycle-api-key");
+const apiKeyStatus = requiredElement("api-key-status");
 const statusCard = requiredElement<HTMLElement>("status").closest(
   ".status-card",
 );
@@ -83,6 +92,14 @@ let notificationHistoryLoading = false;
 let notificationHistoryGeneration = 0;
 let notificationHistoryObserver: IntersectionObserver | undefined;
 const displayedNotificationIds = new Set<string>();
+
+/** The full key is held only in memory so the copy stays in the click gesture. */
+let currentApiKey: string | undefined;
+let apiKeyGeneration = 0;
+let apiKeyCycleBusy = false;
+let copyFeedbackTimer: number | undefined;
+let cycleArmTimer: number | undefined;
+const CYCLE_ARM_TIMEOUT_MS = 4000;
 
 function createActionButton(label: string, id: string): HTMLButtonElement {
   const button = document.createElement("button");
@@ -457,6 +474,165 @@ async function refreshMetrics(): Promise<void> {
   }
 }
 
+async function fetchApiKey(
+  path: string,
+  method: "GET" | "POST",
+): Promise<ApiKeyResponse> {
+  const response = await fetch(path, {
+    method,
+    credentials: "same-origin",
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      error?: unknown;
+    } | null;
+    throw new SessionAwareError(
+      typeof body?.error === "string"
+        ? body.error
+        : `API key request failed (${response.status})`,
+      response.status,
+    );
+  }
+  const body = (await response.json()) as Partial<ApiKeyResponse>;
+  if (typeof body.apiKey !== "string" || typeof body.maskedKey !== "string") {
+    throw new Error("server returned an invalid API key");
+  }
+  return { apiKey: body.apiKey, maskedKey: body.maskedKey };
+}
+
+/** Shows the mask, keeping the full key out of the DOM but ready to copy. */
+function renderApiKey(key: ApiKeyResponse): void {
+  currentApiKey = key.apiKey;
+  apiKeyValue.value = key.maskedKey;
+}
+
+function setApiKeyStatus(message: string, isError = false): void {
+  apiKeyStatus.textContent = message;
+  apiKeyStatus.classList.toggle("error", isError);
+}
+
+function setApiKeyError(context: string, error: unknown): void {
+  const detail = error instanceof Error ? error.message : "Unknown error";
+  apiKeyStatus.replaceChildren(`${context}: ${detail} `);
+  apiKeyStatus.classList.add("error");
+  if (
+    error instanceof SessionAwareError &&
+    (error.status === 401 || error.status === 403)
+  ) {
+    const signIn = document.createElement("a");
+    signIn.href = "/.auth/login/aad?post_login_redirect_uri=/";
+    signIn.textContent = "Sign in again";
+    apiKeyStatus.append(signIn);
+  }
+}
+
+async function loadApiKey(): Promise<void> {
+  const generation = (apiKeyGeneration += 1);
+  try {
+    const key = await fetchApiKey("/api/apikey", "GET");
+    if (generation !== apiKeyGeneration) {
+      return;
+    }
+    renderApiKey(key);
+    setApiKeyStatus("");
+  } catch (error) {
+    if (generation === apiKeyGeneration) {
+      setApiKeyError("Unable to load the API key", error);
+    }
+  }
+}
+
+function showCopyFeedback(message: string, isError = false): void {
+  setApiKeyStatus(message, isError);
+  window.clearTimeout(copyFeedbackTimer);
+  copyFeedbackTimer = window.setTimeout(() => setApiKeyStatus(""), 2000);
+}
+
+/** iOS and older Safari lack or reject navigator.clipboard, so fall back to a
+ * temporary textarea. The write stays inside the click gesture either way. */
+function copyWithExecCommand(text: string): void {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.append(textarea);
+  textarea.select();
+  try {
+    const copied = document.execCommand("copy");
+    showCopyFeedback(copied ? "Copied" : "Copy failed", !copied);
+  } catch {
+    showCopyFeedback("Copy failed", true);
+  } finally {
+    textarea.remove();
+  }
+}
+
+function copyApiKeyToClipboard(): void {
+  const key = currentApiKey;
+  if (!key) {
+    return;
+  }
+  // Never await before writeText: iOS discards the clipboard write once the
+  // synchronous user gesture ends, so the full key is copied straight away.
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(key).then(
+      () => showCopyFeedback("Copied"),
+      () => copyWithExecCommand(key),
+    );
+    return;
+  }
+  copyWithExecCommand(key);
+}
+
+function disarmCycle(): void {
+  window.clearTimeout(cycleArmTimer);
+  cycleArmTimer = undefined;
+  cycleApiKey.removeAttribute("data-armed");
+  cycleApiKey.textContent = "🔄";
+  cycleApiKey.setAttribute("aria-label", "Regenerate API key");
+  cycleApiKey.title = "Regenerate API key";
+}
+
+function armCycle(): void {
+  cycleApiKey.dataset.armed = "true";
+  cycleApiKey.textContent = "Confirm";
+  cycleApiKey.setAttribute("aria-label", "Confirm API key regeneration");
+  cycleApiKey.title = "Confirm API key regeneration";
+  setApiKeyStatus(
+    "Regenerating breaks every configured CLI and MCP client. Click Confirm to continue.",
+  );
+  window.clearTimeout(cycleArmTimer);
+  cycleArmTimer = window.setTimeout(disarmCycle, CYCLE_ARM_TIMEOUT_MS);
+}
+
+async function cycleApiKeyValue(): Promise<void> {
+  disarmCycle();
+  apiKeyCycleBusy = true;
+  cycleApiKey.disabled = true;
+  copyApiKey.disabled = true;
+  const generation = (apiKeyGeneration += 1);
+  setApiKeyStatus("Regenerating API key...");
+  try {
+    const key = await fetchApiKey("/api/apikey/cycle", "POST");
+    if (generation !== apiKeyGeneration) {
+      return;
+    }
+    renderApiKey(key);
+    setApiKeyStatus("API key regenerated");
+  } catch (error) {
+    if (generation === apiKeyGeneration) {
+      setApiKeyError("Unable to regenerate the API key", error);
+    }
+  } finally {
+    apiKeyCycleBusy = false;
+    cycleApiKey.disabled = false;
+    copyApiKey.disabled = false;
+  }
+}
+
 async function runPushTask(
   action: () => Promise<void>,
   failureContext: string,
@@ -782,6 +958,28 @@ async function registerServiceWorker(): Promise<void> {
 refreshMessages.addEventListener("click", () => {
   void reloadNotificationHistory();
 });
+copyApiKey.addEventListener("click", copyApiKeyToClipboard);
+cycleApiKey.addEventListener("click", () => {
+  if (apiKeyCycleBusy) {
+    return;
+  }
+  if (cycleApiKey.dataset.armed === "true") {
+    void cycleApiKeyValue();
+  } else {
+    armCycle();
+  }
+});
+// A click anywhere else or Escape disarms the pending confirmation.
+document.addEventListener("click", (event) => {
+  if (cycleApiKey.dataset.armed === "true" && event.target !== cycleApiKey) {
+    disarmCycle();
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && cycleApiKey.dataset.armed === "true") {
+    disarmCycle();
+  }
+});
 toggleNotifications.addEventListener("click", () => {
   void (toggleNotifications.getAttribute("aria-pressed") === "true"
     ? disablePushNotifications()
@@ -856,5 +1054,6 @@ if ("Notification" in window) {
 
 void connect();
 void refreshMetrics();
+void loadApiKey();
 watchNotificationHistoryPaging();
 void loadNotificationHistory();

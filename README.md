@@ -11,6 +11,11 @@ wakes subscribed devices even when the PWA is closed. Secrets are used only by
 the Go CLI and server-side Azure Functions; they are never shipped to the
 browser.
 
+The app is multi-user. Every authorized Microsoft account has its own
+notifications, history, metrics and API key, and no account can ever see
+another's data. Each account's key is minted automatically the first time it
+opens the web app and is managed from the API key section of the frontend.
+
 ## Architecture
 
 | Component | Technology | Purpose |
@@ -23,6 +28,11 @@ browser.
 
 All senders and receivers use the Web PubSub hub named `notifications`.
 
+> **Operators:** Azure Web PubSub Free (`F1`) allows only 20 concurrent
+> connections in total. With the multi-user model this budget is shared across
+> all users rather than one, and each open browser tab and installed PWA holds
+> one connection.
+
 ## Prerequisites
 
 - Go 1.24 or newer
@@ -30,7 +40,7 @@ All senders and receivers use the Web PubSub hub named `notifications`.
 - pnpm 10.34.5
 - An Azure subscription. `infra\main.bicep` creates the Web PubSub instance,
   the Static Web App and the storage account holding the `PushSubscriptions`,
-  `NotificationHistory` and `NotificationMetrics` tables.
+  `NotificationHistory`, `NotificationMetrics` and `ApiKeys` tables.
 
 ## Build the CLI
 
@@ -51,25 +61,36 @@ Notification CLI v20260823.113928 - (C) Luc Vo Van, 2026 - Built with AI
 
 ## Configure the CLI
 
-Set the deployed Static Web App URL and its notification API key in the
+First obtain your personal API key: sign in to the deployed web app, open the
+**API key** section, and copy the key. The key belongs to your account alone.
+
+Set the deployed Static Web App URL and your personal API key in the
 environment instead of passing secrets on the command line:
 
 ```powershell
 $env:NOTIFICATION_CLI_API_URL = "https://<your-static-web-app>.azurestaticapps.net"
-$env:NOTIFICATION_CLI_API_KEY = "<notification-api-key>"
+$env:NOTIFICATION_CLI_API_KEY = "<your-personal-api-key>"
 notify --configure
 Remove-Item Env:NOTIFICATION_CLI_API_URL
 Remove-Item Env:NOTIFICATION_CLI_API_KEY
 ```
 
-`--configure` validates and copies the value to the current user's application
-configuration directory. On Windows this is
-`%LOCALAPPDATA%\Notification CLI\config.json`; on macOS and Linux it is under
-the operating system's user configuration directory.
+`--configure` calls `/api/whoami` to confirm the key belongs to a still
+authorized account before it saves anything. A rejected key fails without
+writing the configuration; a valid key is copied to the current user's
+application configuration directory and the resolved account is printed. On
+Windows this is `%LOCALAPPDATA%\Notification CLI\config.json`; on macOS and
+Linux it is under the operating system's user configuration directory.
+
+Cycling the key from the web app's API key section invalidates the old key
+immediately, so afterwards you must re-run `notify --configure` and update
+every MCP client that used it. Removing your address from `AUTHORIZED_USERS`
+revokes your key just as immediately.
 
 The two environment variables take precedence over saved configuration when
 both are present. The CLI sends through `/api/notify`, allowing the server to
-fan out each message to active Web PubSub clients and closed subscribed PWAs.
+resolve the key to your account and fan out each message to your active Web
+PubSub clients and closed subscribed PWAs.
 
 ## Send a notification
 
@@ -98,7 +119,7 @@ enabled.
 ## Provision Azure resources
 
 `infra\main.bicep` declares the whole solution on free tiers: a Web PubSub
-instance (`Free_F1`), a `Standard_LRS` storage account with the three tables,
+instance (`Free_F1`), a `Standard_LRS` storage account with the four tables,
 and a Free-tier Static Web App. It also writes the Static Web App's
 environment variables, deriving the Web PubSub and storage connection strings
 from the resources it just created, so neither is ever copied by hand.
@@ -132,7 +153,6 @@ the Contributor role over the resource group, then set:
 | `AZURE_CLIENT_ID` | Application (client) ID of the app registration |
 | `AZURE_TENANT_ID` | Directory (tenant) ID |
 | `AZURE_SUBSCRIPTION_ID` | Target subscription |
-| `NOTIFICATION_CLI_API_KEY` | Key the CLI and the MCP client present to `/api/notify` and `/api/mcp` |
 | `VAPID_PUBLIC_KEY` | Web Push public key. Leave unset to deploy without push |
 | `VAPID_PRIVATE_KEY` | Web Push private key |
 
@@ -157,8 +177,7 @@ az staticwebapp secrets list --name notification-cli-swa `
 az deployment group create `
   --resource-group notification-cli `
   --template-file infra\main.bicep `
-  --parameters authorizedUsers="you@example.com" `
-               notificationApiKey=$env:NOTIFICATION_CLI_API_KEY
+  --parameters authorizedUsers="you@example.com"
 ```
 
 Because the settings resource replaces the entire collection, a setting added
@@ -174,12 +193,11 @@ manually created instance:
 | Variable | Purpose |
 | --- | --- |
 | `NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING` | **Required.** Server-side Web PubSub connection used to negotiate browser access and send messages |
-| `NOTIFICATION_CLI_API_KEY` | **Required.** Long random key shared by the Go CLI and the MCP server to reach `/api/notify` and `/api/mcp` |
-| `AUTHORIZED_USERS` | **Required.** Semicolon-separated Microsoft account email addresses allowed to use the browser app |
+| `AUTHORIZED_USERS` | **Required.** Semicolon-separated Microsoft account email addresses allowed to use the browser app. Removing an address revokes that account's API key immediately |
 | `NOTIFICATION_CLI_VAPID_PUBLIC_KEY` | Push only. URL-safe VAPID public key returned to authorized browsers |
 | `NOTIFICATION_CLI_VAPID_PRIVATE_KEY` | Push only. Secret VAPID private key used only by the API |
 | `NOTIFICATION_CLI_VAPID_SUBJECT` | Push only. VAPID contact URI, normally `mailto:you@example.com` |
-| `NOTIFICATION_CLI_STORAGE_CONNECTION_STRING` | Azure Storage connection string used for durable push subscriptions, notification history and metrics |
+| `NOTIFICATION_CLI_STORAGE_CONNECTION_STRING` | Azure Storage connection string used for durable push subscriptions, per-user API keys, notification history and metrics |
 | `NOTIFICATION_CLI_RETENTION_DAYS` | Optional. Whole number of days notifications stay readable in the frontend. Defaults to `7`, maximum `365` |
 
 Real-time delivery through Web PubSub is the required core transport. The
@@ -187,7 +205,7 @@ Real-time delivery through Web PubSub is the required core transport. The
 notifications are still delivered live to open pages and the response reports
 `"pushConfigured": false` instead of failing. Missing a **required** setting
 makes `/api/notify` answer `503` naming the exact variable, for example
-`{"error":"NOTIFICATION_CLI_API_KEY is not configured."}`.
+`{"error":"NOTIFICATION_CLI_STORAGE_CONNECTION_STRING is not configured."}`.
 
 Generate a VAPID key pair once and keep it stable. Rotating it requires clients
 to create a new browser subscription:
@@ -198,20 +216,23 @@ pnpm --filter @notification-cli/api exec web-push generate-vapid-keys
 
 The frontend calls `/api/negotiate` to receive a short-lived client URL and
 then opens a secure WebSocket. It receives only the VAPID public key; the
-Web PubSub connection string, VAPID private key, API key, and Storage
-connection string remain server-side.
+Web PubSub connection string, VAPID private key, the per-user API keys, and
+Storage connection string remain server-side.
 
 The Static Web App uses its Free-tier-compatible built-in Microsoft Entra ID
 provider to gate only the PWA frontend. Visiting the page redirects to
 `/.auth/login/aad`; no custom identity provider registration or paid role
 management is required. All `/api/*` routes remain anonymous at the Static Web
 Apps routing layer and enforce their own security: `/api/notify` and `/api/mcp`
-share a single API key, while browser session, negotiation, and
-push-subscription handlers validate the signed-in principal and allowlist. Set
-`AUTHORIZED_USERS` to one or more email addresses, for example
-`first.user@example.com;second.user@example.com`. Comparison ignores case and
-surrounding whitespace. The API fails closed when the setting is absent or
-empty.
+resolve the presented `x-api-key` to the account that owns it and re-check that
+account against the allowlist on every call, while browser session,
+negotiation, and push-subscription handlers validate the signed-in principal
+and allowlist. Because authorization is re-evaluated per request, removing an
+address from `AUTHORIZED_USERS` revokes its API key immediately, with no
+separate key management step. Set `AUTHORIZED_USERS` to one or more email
+addresses, for example `first.user@example.com;second.user@example.com`.
+Comparison ignores case and surrounding whitespace. The API fails closed when
+the setting is absent or empty.
 
 After sign-in, `/api/session` confirms whether the Microsoft account is
 allowlisted. The page displays sign-in and sign-out links when access cannot be
@@ -347,9 +368,11 @@ The MCP endpoint is:
 https://<your-static-web-app>.azurestaticapps.net/api/mcp
 ```
 
-It authenticates with an `x-api-key: <key>` header carrying
-`NOTIFICATION_CLI_API_KEY`, the same key the CLI uses. The two MCP clients
-differ in how they supply that secret, so use the matching example below.
+It authenticates with an `x-api-key: <key>` header carrying your personal API
+key, the same key the CLI uses. Copy it from the API key section of the web
+app. If you cycle the key there, update every MCP client that used it. The two
+MCP clients differ in how they supply that secret, so use the matching example
+below.
 
 ### VS Code
 
@@ -465,14 +488,33 @@ installer, checks and packages the web application, and deploys the frontend
 and API. Unlike the infrastructure workflow it also runs on every push to
 `main`.
 
+## Breaking migration for this release
+
+This release converts the app from a single shared key to per-user keys. The
+`NotificationHistory` and `NotificationMetrics` schemas changed, and the
+`NOTIFICATION_CLI_API_KEY` application setting is gone. Upgrade an existing
+deployment in this order:
+
+1. Delete the `NotificationHistory` and `NotificationMetrics` tables in the
+   storage account. The code recreates them automatically on next use; their
+   schema has changed, so old rows are unusable. Notification counters restart
+   at zero.
+2. Remove the `NOTIFICATION_CLI_API_KEY` application setting from the Static
+   Web App.
+3. Deploy.
+4. Each user signs in, copies their new personal key from the API key section
+   of the UI, then re-runs `notify --configure` and updates their MCP config.
+
 ## Security
 
 - Never place the Web PubSub connection string in a `VITE_*` variable. Vite
   variables are embedded in browser assets.
 - Keep the VAPID private key and Azure Storage connection string server-side.
-- Use a long, randomly generated `NOTIFICATION_CLI_API_KEY` and rotate it if
-  exposed. It is the only credential guarding `/api/notify` and `/api/mcp`, so
-  rotating it means updating both the CLI configuration and every MCP client.
+- Treat your personal API key like a password. Cycle it from the web app's API
+  key section if it is exposed; the old key stops working immediately, so
+  update the CLI configuration and every MCP client that used it. Each key
+  guards only its owner's `/api/notify` and `/api/mcp` access, and is
+  additionally revoked the moment its account leaves `AUTHORIZED_USERS`.
 - Keep `AUTHORIZED_USERS` limited to the Microsoft accounts that should receive
   browser notifications. An authenticated account is not sufficient by itself.
 - Keep the local CLI configuration file private to your user account.

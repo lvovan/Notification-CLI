@@ -4,8 +4,9 @@
   Creates every Azure resource the solution needs, all on Free tiers:
 
     - Azure Web PubSub (Free_F1): real-time transport to open browser tabs.
-    - Azure Storage (Standard_LRS): three tables holding push subscriptions,
-      notification metrics and the retained notification history.
+    - Azure Storage (Standard_LRS): four tables holding per-user push
+      subscriptions, notification metrics, retained notification history and
+      the API keys minted for each authorized account.
     - Azure Static Web App (Free): hosts the PWA and the Functions API, and
       provides the built-in Microsoft Entra ID sign-in that gates the frontend.
 
@@ -34,11 +35,6 @@ param location string = 'westeurope'
 
 @description('Semicolon-separated Microsoft account email addresses allowed to open the web frontend, for example "first@example.com;second@example.com".')
 param authorizedUsers string
-
-@description('Long random key the Go CLI and the MCP server both present to /api/notify and /api/mcp.')
-@secure()
-@minLength(32)
-param notificationApiKey string
 
 @description('URL-safe VAPID public key handed to authorized browsers. Leave empty to deploy without Web Push; live delivery to open tabs still works.')
 param vapidPublicKey string = ''
@@ -74,6 +70,7 @@ var tableNames = [
   'PushSubscriptions'
   'NotificationMetrics'
   'NotificationHistory'
+  'ApiKeys'
 ]
 
 var pushConfigured = !empty(vapidPublicKey)
@@ -152,7 +149,6 @@ resource staticWebAppSettings 'Microsoft.Web/staticSites/config@2024-11-01' = {
     {
       NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING: webPubSub.listKeys().primaryConnectionString
       NOTIFICATION_CLI_STORAGE_CONNECTION_STRING: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};AccountKey=${storageAccount.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
-      NOTIFICATION_CLI_API_KEY: notificationApiKey
       NOTIFICATION_CLI_RETENTION_DAYS: string(retentionDays)
       AUTHORIZED_USERS: authorizedUsers
     },

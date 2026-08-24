@@ -123,3 +123,75 @@ func TestPostNotificationRejectsOversizedMessage(t *testing.T) {
 		t.Fatalf("expected size error, got %v", err)
 	}
 }
+
+func TestVerifyAPIKeySucceeds(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/api/whoami" {
+			t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+		if actual := request.Header.Get("x-api-key"); actual != testAPIKey {
+			t.Errorf("unexpected x-api-key header: %s", actual)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(map[string]string{"email": "user@example.com"})
+	}))
+	defer server.Close()
+
+	config := configuration{APIURL: server.URL, APIKey: testAPIKey}
+	email, err := verifyAPIKey(t.Context(), server.Client(), config)
+	if err != nil {
+		t.Fatalf("verify API key: %v", err)
+	}
+	if email != "user@example.com" {
+		t.Fatalf("got email %q", email)
+	}
+}
+
+func TestVerifyAPIKeyRejectsUnauthorized(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusUnauthorized)
+		_, _ = writer.Write([]byte(`{"error":"Unauthorized: ` + testAPIKey + `"}`))
+	}))
+	defer server.Close()
+
+	config := configuration{APIURL: server.URL, APIKey: testAPIKey}
+	_, err := verifyAPIKey(t.Context(), server.Client(), config)
+	if err == nil || !strings.Contains(err.Error(), "API key section") {
+		t.Fatalf("expected actionable rejection error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "authorized") {
+		t.Fatalf("expected error to mention the authorized users list, got %v", err)
+	}
+	if strings.Contains(err.Error(), testAPIKey) {
+		t.Fatal("error exposed API key")
+	}
+}
+
+func TestVerifyAPIKeyRejectsGarbageResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte("not json at all"))
+	}))
+	defer server.Close()
+
+	config := configuration{APIURL: server.URL, APIKey: testAPIKey}
+	_, err := verifyAPIKey(t.Context(), server.Client(), config)
+	if err == nil || !strings.Contains(err.Error(), "unexpected response") {
+		t.Fatalf("expected unexpected-response error, got %v", err)
+	}
+}
+
+func TestVerifyAPIKeyHandlesTransportFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	client := server.Client()
+	url := server.URL
+	server.Close()
+
+	config := configuration{APIURL: url, APIKey: testAPIKey}
+	_, err := verifyAPIKey(t.Context(), client, config)
+	if err == nil || !strings.Contains(err.Error(), "verify API key") {
+		t.Fatalf("expected transport failure error, got %v", err)
+	}
+	if strings.Contains(err.Error(), testAPIKey) {
+		t.Fatal("error exposed API key")
+	}
+}

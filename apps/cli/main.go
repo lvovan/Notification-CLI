@@ -46,6 +46,11 @@ func configure() error {
 	if err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
+	client := &http.Client{Timeout: notificationTimeout}
+	email, err := verifyAPIKey(context.Background(), client, config)
+	if err != nil {
+		return err
+	}
 	path, err := configurationPath()
 	if err != nil {
 		return err
@@ -54,7 +59,56 @@ func configure() error {
 		return err
 	}
 	fmt.Printf("Configuration saved to %s\n", path)
+	fmt.Printf("The API key belongs to %s.\n", email)
 	return nil
+}
+
+// verifyAPIKey resolves the configured key to its owner through /api/whoami so
+// a wrong or revoked key is caught before the configuration is written.
+func verifyAPIKey(ctx context.Context, client *http.Client, config configuration) (string, error) {
+	endpoint := strings.TrimRight(config.APIURL, "/") + "/api/whoami"
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", fmt.Errorf("create verification request: %w", err)
+	}
+	request.Header.Set("x-api-key", config.APIKey)
+	request.Header.Set("Accept", "application/json")
+
+	response, err := client.Do(request)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "", errors.New("verify API key: request timed out")
+		}
+		return "", fmt.Errorf("verify API key: %w", err)
+	}
+	defer response.Body.Close()
+
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, maxErrorBodyBytes+1))
+	if readErr != nil {
+		return "", fmt.Errorf("read verification response: %w", readErr)
+	}
+
+	if response.StatusCode == http.StatusUnauthorized {
+		return "", errors.New(
+			"the API key was rejected; copy the current key from the API key section of the web app, " +
+				"and make sure your account is in the authorized users list",
+		)
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		detail := safeResponseDetail(body, config.APIKey)
+		if detail == "" {
+			return "", fmt.Errorf("verification service returned %s", response.Status)
+		}
+		return "", fmt.Errorf("verification service returned %s: %s", response.Status, detail)
+	}
+
+	var payload struct {
+		Email string `json:"email"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || strings.TrimSpace(payload.Email) == "" {
+		return "", errors.New("the verification service returned an unexpected response")
+	}
+	return payload.Email, nil
 }
 
 func sendNotification(message string) error {

@@ -3,27 +3,26 @@ import {
   authorizeBrowserRequest,
   browserAuthorizationError,
 } from "./auth.js";
-import { createWebPubSubClient } from "./web-pubsub.js";
-
-interface WebPubSubNegotiator {
-  getClientAccessToken(options: {
-    expirationTimeInMinutes: number;
-  }): Promise<{ url: string }>;
-}
+import {
+  createWebPubSubClient,
+  issueClientAccessToken,
+  type NotificationNegotiator,
+} from "./web-pubsub.js";
 
 export async function handleNegotiateRequest(
   request: HttpRequest,
   env: NodeJS.ProcessEnv = process.env,
-  createClient: () => WebPubSubNegotiator = createWebPubSubClient,
+  createClient: () => NotificationNegotiator = createWebPubSubClient,
 ): Promise<HttpResponseInit> {
   const authorization = authorizeBrowserRequest(request, env);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);
   }
 
-  const token = await createClient().getClientAccessToken({
-    expirationTimeInMinutes: 60,
-  });
+  const token = await issueClientAccessToken(
+    createClient(),
+    authorization.email,
+  );
   return {
     status: 200,
     jsonBody: { url: token.url },

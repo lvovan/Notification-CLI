@@ -74,7 +74,6 @@ jobs:
       - name: Preview changes
         if: inputs.mode == 'what-if'
         env:
-          NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_CLI_API_KEY }}
           VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_SUBJECT: ${{ vars.VAPID_SUBJECT }}
@@ -89,7 +88,6 @@ jobs:
               location="${{ inputs.location }}" \
               customDomain="${{ inputs.custom_domain }}" \
               authorizedUsers="$AUTHORIZED_USERS" \
-              notificationApiKey="$NOTIFICATION_API_KEY" \
               vapidPublicKey="$VAPID_PUBLIC_KEY" \
               vapidPrivateKey="$VAPID_PRIVATE_KEY" \
               vapidSubject="$VAPID_SUBJECT" \
@@ -99,7 +97,6 @@ jobs:
         id: deploy
         if: inputs.mode == 'deploy'
         env:
-          NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_CLI_API_KEY }}
           VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_SUBJECT: ${{ vars.VAPID_SUBJECT }}
@@ -115,7 +112,6 @@ jobs:
               location="${{ inputs.location }}" \
               customDomain="${{ inputs.custom_domain }}" \
               authorizedUsers="$AUTHORIZED_USERS" \
-              notificationApiKey="$NOTIFICATION_API_KEY" \
               vapidPublicKey="$VAPID_PUBLIC_KEY" \
               vapidPrivateKey="$VAPID_PRIVATE_KEY" \
               vapidSubject="$VAPID_SUBJECT" \

@@ -1,29 +1,45 @@
-import { timingSafeEqual } from "node:crypto";
 import type { HttpRequest } from "@azure/functions";
+import { AUTHORIZED_USERS_ENV, parseAuthorizedUsers } from "./auth.js";
+import { tryCreateApiKeyStore, type ApiKeyStore } from "./api-key-storage.js";
+import { ConfigurationError } from "./configuration.js";
+import { notificationOwner, type NotificationOwner } from "./identity.js";
+import { STORAGE_CONNECTION_STRING_ENV } from "./table-storage.js";
 
-/** Single shared key: the CLI and the MCP server present the same secret. */
-export const NOTIFICATION_API_KEY_ENV = "NOTIFICATION_CLI_API_KEY";
+export type ApiKeyResolution =
+  | { authorized: true; owner: NotificationOwner }
+  | { authorized: false };
 
-function secureEqual(actual: string | null, expected: string): boolean {
-  if (actual === null) {
-    return false;
-  }
-  const actualBytes = Buffer.from(actual);
-  const expectedBytes = Buffer.from(expected);
-  return (
-    actualBytes.length === expectedBytes.length &&
-    timingSafeEqual(actualBytes, expectedBytes)
-  );
-}
-
-export function hasValidApiKey(
+/**
+ * Resolves the presented key to the account that owns it. Authorization is
+ * re-evaluated on every request, so removing an address from AUTHORIZED_USERS
+ * revokes its key immediately without any separate key management step.
+ */
+export async function resolveApiKeyOwner(
   request: Pick<HttpRequest, "headers">,
   env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  const configuredKey = env[NOTIFICATION_API_KEY_ENV];
-  if (!configuredKey) {
-    throw new Error(`${NOTIFICATION_API_KEY_ENV} is not configured.`);
+  store?: ApiKeyStore | null,
+): Promise<ApiKeyResolution> {
+  const presented = request.headers.get("x-api-key");
+  if (!presented) {
+    return { authorized: false };
   }
 
-  return secureEqual(request.headers.get("x-api-key"), configuredKey);
+  const keys = store === undefined ? tryCreateApiKeyStore(env) : store;
+  if (!keys) {
+    throw new ConfigurationError(
+      STORAGE_CONNECTION_STRING_ENV,
+      `${STORAGE_CONNECTION_STRING_ENV} is not configured.`,
+    );
+  }
+
+  const email = await keys.resolve(presented);
+  if (!email) {
+    return { authorized: false };
+  }
+
+  const authorizedUsers = parseAuthorizedUsers(env[AUTHORIZED_USERS_ENV]);
+  if (!authorizedUsers.has(email)) {
+    return { authorized: false };
+  }
+  return { authorized: true, owner: notificationOwner(email) };
 }

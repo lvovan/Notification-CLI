@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { type TableClient, type TableEntity } from "@azure/data-tables";
+import { odata, type TableClient, type TableEntity } from "@azure/data-tables";
+import { endpointKey, userKey } from "./identity.js";
 import {
   createTableClient,
   ensureTable,
@@ -22,7 +22,7 @@ export interface PushSubscriptionStore {
   save(identity: string, subscription: PushSubscriptionData): Promise<void>;
   remove(identity: string, endpoint: string): Promise<void>;
   removeStored(subscription: StoredPushSubscription): Promise<void>;
-  list(authorizedIdentities: Iterable<string>): Promise<StoredPushSubscription[]>;
+  list(identity: string): Promise<StoredPushSubscription[]>;
 }
 
 export interface PushSubscriptionData {
@@ -32,10 +32,6 @@ export interface PushSubscriptionData {
     p256dh: string;
     auth: string;
   };
-}
-
-function keyHash(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
 }
 
 export function parsePushSubscription(
@@ -102,8 +98,8 @@ export class AzureTablePushSubscriptionStore
   ): Promise<void> {
     await ensureTable(this.client);
     const entity: TableEntity = {
-      partitionKey: keyHash(identity),
-      rowKey: keyHash(subscription.endpoint),
+      partitionKey: userKey(identity),
+      rowKey: endpointKey(subscription.endpoint),
       endpoint: subscription.endpoint,
       p256dh: subscription.keys.p256dh,
       auth: subscription.keys.auth,
@@ -117,7 +113,7 @@ export class AzureTablePushSubscriptionStore
   async remove(identity: string, endpoint: string): Promise<void> {
     await ensureTable(this.client);
     try {
-      await this.client.deleteEntity(keyHash(identity), keyHash(endpoint));
+      await this.client.deleteEntity(userKey(identity), endpointKey(endpoint));
     } catch (error) {
       if (tableStatusCode(error) !== 404) {
         throw error;
@@ -139,17 +135,17 @@ export class AzureTablePushSubscriptionStore
     }
   }
 
-  async list(
-    authorizedIdentities: Iterable<string>,
-  ): Promise<StoredPushSubscription[]> {
+  async list(identity: string): Promise<StoredPushSubscription[]> {
     await ensureTable(this.client);
-    const authorizedPartitions = new Set(
-      Array.from(authorizedIdentities, keyHash),
-    );
+    // A single-partition query is the isolation boundary: a browser only ever
+    // sees its own endpoints, and we no longer scan the whole table.
+    const filter = odata`PartitionKey eq ${userKey(identity)}`;
     const subscriptions: StoredPushSubscription[] = [];
-    for await (const entity of this.client.listEntities<StoredPushSubscription>()) {
+    const entities = this.client.listEntities<StoredPushSubscription>({
+      queryOptions: { filter },
+    });
+    for await (const entity of entities) {
       if (
-        authorizedPartitions.has(entity.partitionKey) &&
         typeof entity.endpoint === "string" &&
         typeof entity.p256dh === "string" &&
         typeof entity.auth === "string"

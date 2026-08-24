@@ -4,6 +4,7 @@ import {
   browserAuthorizationError,
 } from "./auth.js";
 import { ConfigurationError } from "./configuration.js";
+import { userKey } from "./identity.js";
 import {
   tryCreateNotificationMetricsStore,
   type NotificationMetricsStore,
@@ -37,7 +38,9 @@ export async function handleMetricsRequest(
     return {
       status: 200,
       headers: { "Cache-Control": "no-store" },
-      jsonBody: await metrics.counts(now()),
+      // The partition comes from the signed-in principal, never from the
+      // request, so a caller cannot ask for another account's counters.
+      jsonBody: await metrics.counts(userKey(authorization.email), now()),
     };
   } catch (error) {
     if (error instanceof ConfigurationError) {

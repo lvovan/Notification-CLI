@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { AUTHORIZED_USERS_ENV } from "../src/auth.js";
-import { NOTIFICATION_API_KEY_ENV } from "../src/api-key.js";
+import { API_KEYS_TABLE } from "../src/api-key-storage.js";
 import {
   VAPID_PRIVATE_KEY_ENV,
   VAPID_PUBLIC_KEY_ENV,
@@ -29,7 +29,6 @@ test("the template supplies every setting the API reads", async () => {
   for (const setting of [
     CONNECTION_STRING_ENV,
     STORAGE_CONNECTION_STRING_ENV,
-    NOTIFICATION_API_KEY_ENV,
     AUTHORIZED_USERS_ENV,
     RETENTION_DAYS_ENV,
     VAPID_PUBLIC_KEY_ENV,
@@ -43,6 +42,17 @@ test("the template supplies every setting the API reads", async () => {
   }
 });
 
+test("the template no longer supplies the removed shared API key setting", async () => {
+  const template = await readFile(templatePath, "utf8");
+
+  // Keys are now per-user rows in the ApiKeys table, so the single shared
+  // application setting must be gone entirely.
+  assert.ok(
+    !template.includes("NOTIFICATION_CLI_API_KEY"),
+    "infra/main.bicep still references the removed NOTIFICATION_CLI_API_KEY setting",
+  );
+});
+
 test("the template declares the tables the storage layer uses", async () => {
   const template = await readFile(templatePath, "utf8");
 
@@ -50,6 +60,7 @@ test("the template declares the tables the storage layer uses", async () => {
     PUSH_SUBSCRIPTIONS_TABLE,
     NOTIFICATION_METRICS_TABLE,
     NOTIFICATION_HISTORY_TABLE,
+    API_KEYS_TABLE,
   ]) {
     assert.ok(
       template.includes(`'${table}'`),

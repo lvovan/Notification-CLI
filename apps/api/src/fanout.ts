@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import webPush, { type PushSubscription } from "web-push";
-import { AUTHORIZED_USERS_ENV, parseAuthorizedUsers } from "./auth.js";
 import { hasSetting, requireSetting } from "./configuration.js";
+import type { NotificationOwner } from "./identity.js";
 import {
   tryCreateNotificationMetricsStore,
   type NotificationMetricsStore,
@@ -18,19 +18,16 @@ import {
   type PushSubscriptionStore,
   type StoredPushSubscription,
 } from "./push-storage.js";
-import { createWebPubSubClient } from "./web-pubsub.js";
+import {
+  createNotificationSender,
+  sendToUserGroup,
+  type NotificationGroupSender,
+} from "./web-pubsub.js";
 
 export const VAPID_PUBLIC_KEY_ENV = "NOTIFICATION_CLI_VAPID_PUBLIC_KEY";
 export const VAPID_PRIVATE_KEY_ENV = "NOTIFICATION_CLI_VAPID_PRIVATE_KEY";
 export const VAPID_SUBJECT_ENV = "NOTIFICATION_CLI_VAPID_SUBJECT";
 export const MAX_NOTIFICATION_MESSAGE_LENGTH = 1000;
-
-interface WebPubSubSender {
-  sendToAll(
-    message: object,
-    options: { contentType: "application/json" },
-  ): Promise<unknown>;
-}
 
 export interface WebPushSender {
   send(
@@ -154,11 +151,12 @@ async function deliverWebPush(
 }
 
 /**
- * Stores the notification so it can be read again later, then lazily sweeps
- * whatever has aged out of the retention window. Neither step may turn a
- * delivered notification into a reported delivery failure.
+ * Stores the notification under its owner so it can be read again later, then
+ * lazily sweeps whatever has aged out of that owner's retention window.
+ * Neither step may turn a delivered notification into a delivery failure.
  */
 async function retainNotification(
+  owner: NotificationOwner,
   notification: StoredNotification,
   sentAt: Date,
   env: NodeJS.ProcessEnv,
@@ -170,9 +168,13 @@ async function retainNotification(
   }
   try {
     const retentionDays = parseRetentionDays(env[RETENTION_DAYS_ENV]);
-    await store.append(notification);
+    await store.append(owner.userKey, notification);
     report.historyRecorded = true;
-    report.historyPruned = await store.prune(sentAt, retentionDays);
+    report.historyPruned = await store.prune(
+      owner.userKey,
+      sentAt,
+      retentionDays,
+    );
   } catch (error) {
     report.historyError = errorMessage(error);
   }
@@ -180,8 +182,9 @@ async function retainNotification(
 
 export async function fanOutNotification(
   message: string,
+  owner: NotificationOwner,
   dependencies?: {
-    webPubSub?: WebPubSubSender;
+    webPubSub?: NotificationGroupSender;
     store?: PushSubscriptionStore;
     webPush?: WebPushSender;
     metrics?: NotificationMetricsStore;
@@ -202,10 +205,7 @@ export async function fanOutNotification(
   };
 
   const env = dependencies?.env ?? process.env;
-  // An empty allowlist yields no push targets, so background push fails closed
-  // without blocking real-time delivery.
-  const authorizedUsers = parseAuthorizedUsers(env[AUTHORIZED_USERS_ENV]);
-  const webPubSub = dependencies?.webPubSub ?? createWebPubSubClient(env);
+  const webPubSub = dependencies?.webPubSub ?? createNotificationSender(env);
   const store = dependencies?.store ?? tryCreatePushSubscriptionStore(env);
   const sender = dependencies?.webPush ?? tryCreateWebPushSender(env);
   report.pushConfigured = Boolean(store && sender);
@@ -220,14 +220,15 @@ export async function fanOutNotification(
   const pushPayload = JSON.stringify(notification);
 
   const results = await Promise.allSettled([
-    // The SDK serializes JSON payloads itself, so the object must be passed
-    // through unstringified to avoid double-encoding it for browsers.
-    webPubSub.sendToAll(notification, { contentType: "application/json" }),
+    // Delivery is scoped to the owner's group. The SDK serializes JSON payloads
+    // itself, so the object must be passed through unstringified to avoid
+    // double-encoding it for browsers.
+    sendToUserGroup(webPubSub, owner.email, notification),
     (async () => {
-      if (!store || !sender || authorizedUsers.size === 0) {
+      if (!store || !sender) {
         return;
       }
-      const subscriptions = await store.list(authorizedUsers);
+      const subscriptions = await store.list(owner.email);
       await deliverWebPush(
         subscriptions,
         store,
@@ -244,7 +245,7 @@ export async function fanOutNotification(
       dependencies?.metrics ?? tryCreateNotificationMetricsStore(env);
     if (metrics) {
       try {
-        await metrics.record(sentAt);
+        await metrics.record(owner.userKey, sentAt);
         report.metricRecorded = true;
       } catch (error) {
         // Metrics are telemetry: a storage failure must never turn a delivered
@@ -252,7 +253,14 @@ export async function fanOutNotification(
         report.metricError = errorMessage(error);
       }
     }
-    await retainNotification(notification, sentAt, env, report, dependencies?.history);
+    await retainNotification(
+      owner,
+      notification,
+      sentAt,
+      env,
+      report,
+      dependencies?.history,
+    );
   } else {
     report.errors.push(
       `Web PubSub delivery failed: ${errorMessage(results[0].reason)}`,

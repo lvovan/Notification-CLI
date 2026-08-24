@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { HttpRequest } from "@azure/functions";
+import type { ApiKeyStore } from "../src/api-key-storage.js";
 import { ConfigurationError } from "../src/configuration.js";
 import {
   FanoutError,
@@ -8,6 +9,7 @@ import {
   validateNotificationMessage,
   type WebPushSender,
 } from "../src/fanout.js";
+import { notificationOwner } from "../src/identity.js";
 import { handleNotifyRequest } from "../src/notify.js";
 import {
   handleDeletePushSubscription,
@@ -21,8 +23,10 @@ import {
   type StoredPushSubscription,
 } from "../src/push-storage.js";
 
+const OWNER = "user@example.com";
+const CLI_KEY = "ncli_cli-test-key";
 const authorizedEnv = {
-  AUTHORIZED_USERS: "user@example.com",
+  AUTHORIZED_USERS: OWNER,
   NOTIFICATION_CLI_VAPID_PUBLIC_KEY: `B${"A".repeat(86)}`,
 };
 
@@ -74,13 +78,18 @@ class MemoryStore implements PushSubscriptionStore {
     this.removedStored.push(subscription);
   }
 
-  async list(
-    authorizedIdentities: Iterable<string>,
-  ): Promise<StoredPushSubscription[]> {
-    this.listedIdentities = [...authorizedIdentities];
+  async list(identity: string): Promise<StoredPushSubscription[]> {
+    this.listedIdentities.push(identity);
     return this.subscriptions;
   }
 }
+
+/** Minimal stand-in; the lifecycle itself is covered in api-key.test.ts. */
+const keyStore: ApiKeyStore = {
+  ensure: async (email) => ({ email, apiKey: CLI_KEY, createdAt: 0 }),
+  cycle: async (email) => ({ email, apiKey: CLI_KEY, createdAt: 0 }),
+  resolve: async (apiKey) => (apiKey === CLI_KEY ? OWNER : null),
+};
 
 const subscription = {
   endpoint: "https://push.example.test/subscription/1",
@@ -170,14 +179,16 @@ test("fan-out delivers through Web PubSub and Web Push", async () => {
   const store = new MemoryStore([storedSubscription]);
   const pubSubMessages: object[] = [];
   const pushPayloads: string[] = [];
-  const report = await fanOutNotification("hello", {
+  const report = await fanOutNotification("hello", notificationOwner(OWNER), {
     env: authorizedEnv,
     notificationId: () => "notification-id",
     now: () => SENT_AT,
     webPubSub: {
-      sendToAll: async (message) => {
-        pubSubMessages.push(message);
-      },
+      group: () => ({
+        sendToAll: async (message) => {
+          pubSubMessages.push(message);
+        },
+      }),
     },
     store,
     webPush: {
@@ -187,7 +198,7 @@ test("fan-out delivers through Web PubSub and Web Push", async () => {
     },
   });
 
-  assert.deepEqual(store.listedIdentities, ["user@example.com"]);
+  assert.deepEqual(store.listedIdentities, [OWNER]);
   const notification = {
     id: "notification-id",
     title: "Notification CLI",
@@ -211,13 +222,15 @@ test("fan-out delivers through Web PubSub and Web Push", async () => {
 
 test("fan-out succeeds through Web PubSub alone when push is not configured", async () => {
   const pubSubMessages: object[] = [];
-  const report = await fanOutNotification("hello", {
-    env: { AUTHORIZED_USERS: "user@example.com" },
+  const report = await fanOutNotification("hello", notificationOwner(OWNER), {
+    env: {},
     notificationId: () => "notification-id",
     webPubSub: {
-      sendToAll: async (message) => {
-        pubSubMessages.push(message);
-      },
+      group: () => ({
+        sendToAll: async (message) => {
+          pubSubMessages.push(message);
+        },
+      }),
     },
   });
 
@@ -250,10 +263,10 @@ test("fan-out removes expired subscriptions and surfaces other failures", async 
   };
 
   await assert.rejects(
-    fanOutNotification("hello", {
+    fanOutNotification("hello", notificationOwner(OWNER), {
       env: authorizedEnv,
       notificationId: () => "notification-id",
-      webPubSub: { sendToAll: async () => undefined },
+      webPubSub: { group: () => ({ sendToAll: async () => undefined }) },
       store,
       webPush: sender,
     }),
@@ -272,11 +285,8 @@ test("fan-out removes expired subscriptions and surfaces other failures", async 
 test("notify uses API-key auth, validates JSON, and reports partial failure", async () => {
   let deliveredMessage = "";
   const accepted = await handleNotifyRequest(
-    request(
-      { message: " hello " },
-      { "x-api-key": "cli-test-key" },
-    ),
-    { NOTIFICATION_CLI_API_KEY: "cli-test-key" },
+    request({ message: " hello " }, { "x-api-key": CLI_KEY }),
+    authorizedEnv,
     async (message) => {
       deliveredMessage = message;
       return {
@@ -289,21 +299,38 @@ test("notify uses API-key auth, validates JSON, and reports partial failure", as
         errors: [],
       };
     },
+    undefined,
+    keyStore,
   );
   assert.equal(accepted.status, 200);
   assert.equal(deliveredMessage, "hello");
 
   const denied = await handleNotifyRequest(
-    request({ message: "hello" }, { "x-api-key": "wrong-key" }),
-    { NOTIFICATION_CLI_API_KEY: "cli-test-key" },
+    request({ message: "hello" }, { "x-api-key": "ncli_wrong-key" }),
+    authorizedEnv,
+    undefined,
+    undefined,
+    keyStore,
   );
   assert.equal(denied.status, 401);
 
   const invalid = await handleNotifyRequest(
-    request({ message: "" }, { "x-api-key": "cli-test-key" }),
-    { NOTIFICATION_CLI_API_KEY: "cli-test-key" },
+    request({ message: "" }, { "x-api-key": CLI_KEY }),
+    authorizedEnv,
+    undefined,
+    undefined,
+    keyStore,
   );
   assert.equal(invalid.status, 400);
+
+  const unconfigured = await handleNotifyRequest(
+    request({ message: "hello" }, { "x-api-key": CLI_KEY }),
+    authorizedEnv,
+    undefined,
+    undefined,
+    null,
+  );
+  assert.equal(unconfigured.status, 503);
 
   const report = {
     webPubSubDelivered: true,
@@ -315,11 +342,13 @@ test("notify uses API-key auth, validates JSON, and reports partial failure", as
     errors: ["Web Push delivery failed"],
   };
   const partial = await handleNotifyRequest(
-    request({ message: "hello" }, { "x-api-key": "cli-test-key" }),
-    { NOTIFICATION_CLI_API_KEY: "cli-test-key" },
+    request({ message: "hello" }, { "x-api-key": CLI_KEY }),
+    authorizedEnv,
     async () => {
       throw new FanoutError(report);
     },
+    undefined,
+    keyStore,
   );
   assert.equal(partial.status, 502);
   assert.equal(
@@ -330,13 +359,15 @@ test("notify uses API-key auth, validates JSON, and reports partial failure", as
 
 test("notify reports 503 naming the missing setting when misconfigured", async () => {
   const response = await handleNotifyRequest(
-    request({ message: "hello" }, { "x-api-key": "cli-test-key" }),
-    { NOTIFICATION_CLI_API_KEY: "cli-test-key" },
+    request({ message: "hello" }, { "x-api-key": CLI_KEY }),
+    authorizedEnv,
     async () => {
       throw new ConfigurationError(
         "NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING",
       );
     },
+    undefined,
+    keyStore,
   );
   assert.equal(response.status, 503);
   assert.match(

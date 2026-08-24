@@ -26,6 +26,8 @@
   --header-mark-size: 3rem;
   /* Also the gap above the metrics, so the two spacings stay identical. */
   --metrics-gap: 0.4rem;
+  /* Shared by the key field and its two controls so the row lines up. */
+  --apikey-action-size: 2.5rem;
   font-family:
     "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--cp-text);
@@ -292,6 +294,76 @@ a {
 
 .metrics-card {
   margin-top: var(--metrics-gap);
+}
+
+.apikey-card {
+  margin-top: var(--metrics-gap);
+}
+
+.apikey-field {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* The key is ~48 characters, so clip it rather than let it wrap the buttons. */
+.apikey-value {
+  min-width: 0;
+  height: var(--apikey-action-size);
+  padding: 0 0.75rem;
+  border: 1px solid var(--cp-border);
+  border-radius: 0.625rem;
+  color: var(--cp-text);
+  background: var(--cp-surface);
+  font-family:
+    ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.apikey-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.apikey-button {
+  display: grid;
+  width: var(--apikey-action-size);
+  height: var(--apikey-action-size);
+  place-items: center;
+  border: 1px solid var(--cp-border);
+  border-radius: 0.625rem;
+  background: var(--cp-surface-soft);
+  color: var(--cp-text);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.apikey-button:hover:not(:disabled),
+.apikey-button:focus-visible {
+  border-color: var(--cp-border-strong);
+  background: var(--cp-accent-soft);
+}
+
+.apikey-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+/* The armed cycle control spells out "Confirm", so it needs room to grow. */
+.apikey-button[data-armed="true"] {
+  width: auto;
+  padding: 0 0.75rem;
+  border-color: var(--cp-accent);
+  color: var(--cp-accent);
+  background: var(--cp-accent-soft);
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
 .metrics {

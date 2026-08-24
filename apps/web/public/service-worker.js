@@ -36,6 +36,8 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (
     url.origin !== self.location.origin ||
+    // Personal data endpoints (metrics, notifications and the API key at
+    // /api/apikey and /api/apikey/cycle) must always hit the network fresh.
     url.pathname.startsWith("/api/") ||
     url.pathname.startsWith("/.auth/") ||
     // A cached worker script could shadow a newly deployed one.

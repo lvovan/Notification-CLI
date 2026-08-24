@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { HttpRequest } from "@azure/functions";
 import { fanOutNotification } from "../src/fanout.js";
+import { notificationOwner, userKey } from "../src/identity.js";
 import { handleMetricsRequest } from "../src/metrics.js";
 import {
-  AzureTableNotificationMetricsStore,
   countWindows,
   tryCreateNotificationMetricsStore,
   type NotificationCounts,
@@ -13,9 +13,11 @@ import {
 
 const NOW = new Date("2026-08-23T12:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1000;
-const authorizedEnv = { AUTHORIZED_USERS: "user@example.com" };
+const OWNER = "user@example.com";
+const OTHER = "someone.else@example.com";
+const authorizedEnv = { AUTHORIZED_USERS: `${OWNER};${OTHER}` };
 
-function principalHeader(email = "user@example.com"): string {
+function principalHeader(email = OWNER): string {
   return Buffer.from(
     JSON.stringify({
       identityProvider: "aad",
@@ -36,17 +38,25 @@ function request(
   } as unknown as HttpRequest;
 }
 
+const emptyCounts: NotificationCounts = {
+  last24Hours: 0,
+  last7Days: 0,
+  last30Days: 0,
+  total: 0,
+};
+
+/** Counts per user so a query that forgot to scope itself shows up here. */
 class MemoryMetricsStore implements NotificationMetricsStore {
-  readonly recorded: Date[] = [];
+  readonly recorded: Array<{ userKey: string; sentAt: Date }> = [];
 
-  constructor(private readonly counts_: NotificationCounts) {}
+  constructor(private readonly byUser: Map<string, NotificationCounts>) {}
 
-  async record(sentAt: Date): Promise<void> {
-    this.recorded.push(sentAt);
+  async record(partition: string, sentAt: Date): Promise<void> {
+    this.recorded.push({ userKey: partition, sentAt });
   }
 
-  async counts(): Promise<NotificationCounts> {
-    return this.counts_;
+  async counts(partition: string): Promise<NotificationCounts> {
+    return this.byUser.get(partition) ?? emptyCounts;
   }
 }
 
@@ -82,133 +92,15 @@ test("future and expired timestamps are excluded from every window", () => {
   );
 });
 
-test("recording inserts a unique row and increments the lifetime total", async () => {
-  const created: Array<Record<string, unknown>> = [];
-  const updated: Array<{ entity: Record<string, unknown>; etag?: string }> = [];
-  let totalEntity: { count: number; etag: string } | undefined;
-  const client = {
-    createTable: async () => undefined,
-    createEntity: async (entity: Record<string, unknown>) => {
-      if (entity.partitionKey === "totals") {
-        if (totalEntity) {
-          throw Object.assign(new Error("exists"), { statusCode: 409 });
-        }
-        totalEntity = { count: entity.count as number, etag: "etag-1" };
-        return;
-      }
-      created.push(entity);
-    },
-    getEntity: async () => {
-      if (!totalEntity) {
-        throw Object.assign(new Error("missing"), { statusCode: 404 });
-      }
-      return totalEntity;
-    },
-    updateEntity: async (
-      entity: Record<string, unknown>,
-      _mode: string,
-      options?: { etag?: string },
-    ) => {
-      if (options?.etag !== totalEntity?.etag) {
-        throw Object.assign(new Error("conflict"), { statusCode: 412 });
-      }
-      totalEntity = { count: entity.count as number, etag: "etag-2" };
-      updated.push({ entity, ...(options?.etag ? { etag: options.etag } : {}) });
-    },
-  };
-  const store = new AzureTableNotificationMetricsStore(
-    client as unknown as ConstructorParameters<
-      typeof AzureTableNotificationMetricsStore
-    >[0],
-  );
-
-  await store.record(NOW);
-  assert.equal(totalEntity?.count, 1);
-
-  await store.record(new Date(NOW.getTime() + 1));
-  assert.equal(totalEntity?.count, 2);
-  assert.equal(updated[0]?.etag, "etag-1");
-
-  assert.deepEqual(
-    created.map((entity) => entity.partitionKey),
-    ["2026-08-23", "2026-08-23"],
-  );
-  assert.equal(new Set(created.map((entity) => entity.rowKey)).size, 2);
-});
-
-test("a lost race on the total is retried instead of losing a count", async () => {
-  let etag = "etag-1";
-  let count = 5;
-  let attempts = 0;
-  const client = {
-    createTable: async () => undefined,
-    createEntity: async () => undefined,
-    getEntity: async () => ({ count, etag }),
-    updateEntity: async (
-      entity: Record<string, unknown>,
-      _mode: string,
-      options?: { etag?: string },
-    ) => {
-      attempts += 1;
-      if (attempts === 1) {
-        // A concurrent send commits first, invalidating our ETag.
-        count = 6;
-        etag = "etag-2";
-        throw Object.assign(new Error("conflict"), { statusCode: 412 });
-      }
-      count = entity.count as number;
-    },
-  };
-  const store = new AzureTableNotificationMetricsStore(
-    client as unknown as ConstructorParameters<
-      typeof AzureTableNotificationMetricsStore
-    >[0],
-  );
-
-  await store.record(NOW);
-  assert.equal(attempts, 2);
-  assert.equal(count, 7);
-});
-
-test("the day-key filter excludes the totals partition from window queries", async () => {
-  let filter = "";
-  const client = {
-    createTable: async () => undefined,
-    getEntity: async () => ({ count: 12, etag: "etag" }),
-    listEntities: (options: { queryOptions: { filter: string } }) => {
-      filter = options.queryOptions.filter;
-      return {
-        async *[Symbol.asyncIterator]() {
-          yield { sentAt: NOW.getTime() - 60_000 };
-        },
-      };
-    },
-  };
-  const store = new AzureTableNotificationMetricsStore(
-    client as unknown as ConstructorParameters<
-      typeof AzureTableNotificationMetricsStore
-    >[0],
-  );
-
-  const counts = await store.counts(NOW);
-  assert.match(filter, /PartitionKey ge '2026-07-24'/);
-  assert.match(filter, /PartitionKey le '2026-08-23'/);
-  assert.ok(!filter.includes("totals"));
-  assert.deepEqual(counts, {
-    last24Hours: 1,
-    last7Days: 1,
-    last30Days: 1,
-    total: 12,
-  });
-});
-
 test("metrics endpoint requires an authorized browser session", async () => {
-  const store = new MemoryMetricsStore({
-    last24Hours: 1,
-    last7Days: 2,
-    last30Days: 3,
-    total: 4,
-  });
+  const store = new MemoryMetricsStore(
+    new Map([
+      [
+        userKey(OWNER),
+        { last24Hours: 1, last7Days: 2, last30Days: 3, total: 4 },
+      ],
+    ]),
+  );
 
   const authorized = await handleMetricsRequest(
     request(),
@@ -235,11 +127,36 @@ test("metrics endpoint requires an authorized browser session", async () => {
   assert.equal(anonymous.status, 401);
 
   const unlisted = await handleMetricsRequest(
-    request({ "x-ms-client-principal": principalHeader("other@example.com") }),
+    request({ "x-ms-client-principal": principalHeader("nobody@example.com") }),
     authorizedEnv,
     store,
   );
   assert.equal(unlisted.status, 403);
+});
+
+test("metrics are counted per account, never across accounts", async () => {
+  const store = new MemoryMetricsStore(
+    new Map([
+      [
+        userKey(OWNER),
+        { last24Hours: 1, last7Days: 1, last30Days: 1, total: 1 },
+      ],
+      [
+        userKey(OTHER),
+        { last24Hours: 9, last7Days: 9, last30Days: 9, total: 9 },
+      ],
+    ]),
+  );
+
+  const mine = await handleMetricsRequest(request(), authorizedEnv, store);
+  const theirs = await handleMetricsRequest(
+    request({ "x-ms-client-principal": principalHeader(OTHER) }),
+    authorizedEnv,
+    store,
+  );
+
+  assert.equal((mine.jsonBody as NotificationCounts).total, 1);
+  assert.equal((theirs.jsonBody as NotificationCounts).total, 9);
 });
 
 test("metrics endpoint reports 503 when storage is not configured", async () => {
@@ -253,25 +170,20 @@ test("metrics endpoint reports 503 when storage is not configured", async () => 
   );
 });
 
-test("fan-out records a metric without letting storage failures break delivery", async () => {
-  const store = new MemoryMetricsStore({
-    last24Hours: 0,
-    last7Days: 0,
-    last30Days: 0,
-    total: 0,
-  });
-  const recorded = await fanOutNotification("hello", {
-    env: authorizedEnv,
-    webPubSub: { sendToAll: async () => undefined },
+test("fan-out records a metric against the sender without breaking delivery", async () => {
+  const store = new MemoryMetricsStore(new Map());
+  const recorded = await fanOutNotification("hello", notificationOwner(OWNER), {
+    env: {},
+    webPubSub: { group: () => ({ sendToAll: async () => undefined }) },
     metrics: store,
     now: () => NOW,
   });
   assert.equal(recorded.metricRecorded, true);
-  assert.deepEqual(store.recorded, [NOW]);
+  assert.deepEqual(store.recorded, [{ userKey: userKey(OWNER), sentAt: NOW }]);
 
-  const degraded = await fanOutNotification("hello", {
-    env: authorizedEnv,
-    webPubSub: { sendToAll: async () => undefined },
+  const degraded = await fanOutNotification("hello", notificationOwner(OWNER), {
+    env: {},
+    webPubSub: { group: () => ({ sendToAll: async () => undefined }) },
     metrics: {
       record: async () => {
         throw new Error("storage unavailable");
@@ -288,20 +200,17 @@ test("fan-out records a metric without letting storage failures break delivery",
 });
 
 test("a failed Web PubSub send is not counted as a delivered notification", async () => {
-  const store = new MemoryMetricsStore({
-    last24Hours: 0,
-    last7Days: 0,
-    last30Days: 0,
-    total: 0,
-  });
+  const store = new MemoryMetricsStore(new Map());
 
   await assert.rejects(
-    fanOutNotification("hello", {
-      env: authorizedEnv,
+    fanOutNotification("hello", notificationOwner(OWNER), {
+      env: {},
       webPubSub: {
-        sendToAll: async () => {
-          throw new Error("hub unavailable");
-        },
+        group: () => ({
+          sendToAll: async () => {
+            throw new Error("hub unavailable");
+          },
+        }),
       },
       metrics: store,
     }),
