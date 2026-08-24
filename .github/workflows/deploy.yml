@@ -29,32 +29,48 @@ jobs:
       - name: Build CLI
         shell: pwsh
         working-directory: apps/cli
+        env:
+          GOOS: windows
         run: |
           $buildVersion = (Get-Date).ToUniversalTime().ToString("yyyyMMdd.HHmmss")
           New-Item -ItemType Directory -Force -Path ..\..\artifacts | Out-Null
-          go build -trimpath -ldflags "-s -w -X main.version=$buildVersion" -o ..\..\artifacts\notify.exe .
+          # Cross-compiled from the same x64 runner; one binary per installer.
+          foreach ($architecture in "x64", "arm64") {
+            $env:GOARCH = if ($architecture -eq "x64") { "amd64" } else { $architecture }
+            go build -trimpath -ldflags "-s -w -X main.version=$buildVersion" -o "..\..\artifacts\notify-$architecture.exe" .
+            if ($LASTEXITCODE -ne 0) { throw "go build failed for $architecture" }
+          }
 
       - name: Install WiX
         run: dotnet tool install --global wix --version 5.0.2
 
-      - name: Build MSI installer
+      - name: Build MSI installers
         shell: pwsh
         run: |
           $msiBuild = [int]$env:GITHUB_RUN_NUMBER % 65535
           $productVersion = "1.0.$msiBuild"
-          wix build -arch x64 `
-            -d ProductVersion=$productVersion `
-            -d NotifyExecutable="$pwd\artifacts\notify.exe" `
-            -o artifacts\NotificationCLI-x64.msi `
-            installer\NotificationCLI.wxs
+          foreach ($architecture in "x64", "arm64") {
+            wix build -arch $architecture `
+              -d ProductVersion=$productVersion `
+              -d NotifyExecutable="$pwd\artifacts\notify-$architecture.exe" `
+              -o "artifacts\NotificationCLI-$architecture.msi" `
+              installer\NotificationCLI.wxs
+            if ($LASTEXITCODE -ne 0) { throw "wix build failed for $architecture" }
+          }
+          # The payload is embedded, so a stray cabinet means EmbedCab regressed
+          # and the installers would fail wherever they are downloaded alone.
+          $stray = Get-ChildItem artifacts -Filter *.cab -ErrorAction SilentlyContinue
+          if ($stray) { throw "unexpected external cabinet: $($stray.Name -join ', ')" }
 
-      - name: Upload CLI installer
+      - name: Upload CLI installers
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: NotificationCLI-x64
+          name: NotificationCLI-windows
           path: |
-            artifacts/notify.exe
+            artifacts/notify-x64.exe
+            artifacts/notify-arm64.exe
             artifacts/NotificationCLI-x64.msi
+            artifacts/NotificationCLI-arm64.msi
           if-no-files-found: error
 
   deploy:

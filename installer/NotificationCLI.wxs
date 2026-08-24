@@ -8,6 +8,13 @@
     Scope="perMachine">
     <MajorUpgrade DowngradeErrorMessage="A newer version of Notification CLI is already installed." />
 
+    <!--
+      Without EmbedCab the payload is written next to the .msi as cab1.cab, so
+      the installer fails wherever the two are separated - which is every
+      download of a single file from a build artifact.
+    -->
+    <MediaTemplate EmbedCab="yes" />
+
     <Feature Id="MainFeature">
       <ComponentRef Id="NotifyExecutable" />
     </Feature>
@@ -21,14 +28,21 @@
 
   <Fragment>
     <Component Id="NotifyExecutable" Directory="INSTALLFOLDER" Guid="2DC27661-96C7-4683-A305-80A60F72E37D">
-      <File Id="NotifyExe" Source="$(var.NotifyExecutable)" KeyPath="yes" />
+      <File Id="NotifyExe" Name="notify.exe" Source="$(var.NotifyExecutable)" KeyPath="yes" />
+      <!--
+        Appended to the machine PATH, which every user account inherits, and
+        removed again on uninstall. Already-open shells keep their old copy of
+        the environment until they are restarted.
+      -->
       <Environment
         Id="AddInstallFolderToPath"
         Name="PATH"
         Value="[INSTALLFOLDER]"
         Action="set"
         Part="last"
-        System="yes" />
+        Separator=";"
+        System="yes"
+        Permanent="no" />
     </Component>
   </Fragment>
 </Wix>

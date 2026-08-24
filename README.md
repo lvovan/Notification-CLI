@@ -24,7 +24,7 @@ opens the web app and is managed from the API key section of the frontend.
 | `apps/web` | TypeScript and Vite | Installable PWA with live and background notifications |
 | `apps/api` | TypeScript and Azure Functions | Authenticates users, stores subscriptions, fans out messages, and hosts MCP |
 | `infra` | Bicep | Declares the Azure resources and the Static Web App settings |
-| `installer` | WiX Toolset | Builds the Windows x64 MSI |
+| `installer` | WiX Toolset | Builds the Windows x64 and ARM64 MSIs |
 
 All senders and receivers use the Web PubSub hub named `notifications`.
 
@@ -57,6 +57,14 @@ The output has the requested build-timestamp version:
 
 ```text
 Notification CLI v20260823.113928 - (C) Luc Vo Van, 2026 - Built with AI
+```
+
+Windows on ARM is built from the same x64 machine by setting `GOARCH`:
+
+```powershell
+$env:GOOS = "windows"; $env:GOARCH = "arm64"
+go build -trimpath -ldflags "-s -w -X main.version=$version" -o notify-arm64.exe .
+Remove-Item Env:GOOS, Env:GOARCH
 ```
 
 ## Configure the CLI
@@ -473,22 +481,38 @@ curl.exe -s -X POST https://<your-static-web-app>/api/mcp `
 
 ## MSI installer
 
-The GitHub Actions workflow builds `notify.exe` and
-`NotificationCLI-x64.msi` on every push to `main` and every manual run. Both
-files are available from the run's `NotificationCLI-x64` artifact. The MSI
-installs the executable to Program Files and adds its directory to the
-machine-wide `PATH`.
+The GitHub Actions workflow builds an executable and an installer for each
+Windows architecture on every push to `main` and every manual run:
+`notify-x64.exe`, `notify-arm64.exe`, `NotificationCLI-x64.msi` and
+`NotificationCLI-arm64.msi`. All four are available from the run's
+`NotificationCLI-windows` artifact. Windows on ARM can run the x64 build under
+emulation, but the ARM64 installer avoids that.
 
-To build the MSI locally:
+Each MSI installs the executable as `notify.exe` under Program Files and
+appends that directory to the machine-wide `PATH`, which every user account
+inherits. Open a new terminal afterwards — running shells keep the copy of the
+environment they started with. Uninstalling removes the entry again.
+
+The two installers share an upgrade code, so installing one replaces the other
+rather than leaving both on the machine.
+
+To build the installers locally:
 
 ```powershell
 dotnet tool install --global wix --version 5.0.2
-wix build -arch x64 `
-  -d ProductVersion=1.0.1 `
-  -d NotifyExecutable="$pwd\apps\cli\notify.exe" `
-  -o NotificationCLI-x64.msi `
-  installer\NotificationCLI.wxs
+foreach ($architecture in "x64", "arm64") {
+  wix build -arch $architecture `
+    -d ProductVersion=1.0.1 `
+    -d NotifyExecutable="$pwd\apps\cli\notify-$architecture.exe" `
+    -o "NotificationCLI-$architecture.msi" `
+    installer\NotificationCLI.wxs
+}
 ```
+
+The cabinet holding the executable is embedded in the MSI
+(`MediaTemplate EmbedCab="yes"`). Without it WiX writes a separate `cab1.cab`
+next to the installer, and the install fails with *Source file not found:
+cab1.cab* as soon as the MSI is moved or downloaded on its own.
 
 ## Deploy
 
