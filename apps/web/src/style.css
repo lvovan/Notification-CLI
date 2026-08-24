@@ -24,10 +24,11 @@
   --cp-sheen: rgba(255, 255, 255, 0.55);
   --cp-highlight: rgba(177, 31, 75, 0.12);
   --header-mark-size: 3rem;
-  /* Also the gap above the metrics, so the two spacings stay identical. */
+  /* The one spacing between the three top panels, and between metric tiles. */
   --metrics-gap: 0.4rem;
   /* Shared by the key field and its two controls so the row lines up. */
   --apikey-action-size: 2.5rem;
+  --status-dot-size: 0.8rem;
   font-family:
     "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--cp-text);
@@ -172,9 +173,26 @@ time {
   box-shadow: var(--cp-shadow);
 }
 
+/* Without this the long-email line sets a min-content floor that pushes the
+ * bell out of the card on narrow screens. */
+.status-text {
+  min-width: 0;
+}
+
+#account-email {
+  overflow-wrap: anywhere;
+}
+
+/*
+ * The dot belongs to the "Connected" line, not to the block of text below it,
+ * so it is pinned to the top of the row and offset by half the difference
+ * between that first line box and its own height.
+ */
 .status-dot {
-  width: 0.8rem;
-  height: 0.8rem;
+  align-self: start;
+  width: var(--status-dot-size);
+  height: var(--status-dot-size);
+  margin-top: calc((1lh - var(--status-dot-size)) / 2);
   border-radius: 50%;
   background: var(--cp-warning);
   box-shadow: 0 0 0 5px var(--cp-accent-soft);
@@ -287,15 +305,17 @@ a {
   margin-top: 2.25rem;
 }
 
-#messages-status,
-#metrics-status {
+/*
+ * Only reserve the trailing gap when there is a message to show; an empty
+ * status line would otherwise pad the card and widen the spacing below it.
+ */
+#messages-status:not(:empty),
+#metrics-status:not(:empty) {
   margin-top: 1.1rem;
 }
 
-.metrics-card {
-  margin-top: var(--metrics-gap);
-}
-
+/* One spacing separates all three top panels. */
+.metrics-card,
 .apikey-card {
   margin-top: var(--metrics-gap);
 }

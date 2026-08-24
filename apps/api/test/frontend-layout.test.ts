@@ -9,10 +9,10 @@ const stylePath = resolve("../web/src/style.css");
 
 function ruleBody(style: string, selector: string): string {
   const match = new RegExp(
-    `(^|\\n)${selector.replace(/[.#]/g, "\\$&")}\\s*\\{([^}]*)\\}`,
+    `(^|\\n)${selector.replace(/[.#]/g, "\\$&")}\\s*(,\\s*[^{]+)?\\{([^}]*)\\}`,
   ).exec(style);
   assert.ok(match, `missing rule for ${selector}`);
-  return match[2] ?? "";
+  return match[3] ?? "";
 }
 
 test("the logo and the title block share one height token", async () => {
@@ -27,15 +27,31 @@ test("the logo and the title block share one height token", async () => {
   );
 });
 
-test("metrics sit one gap below the status card", async () => {
+test("the three top panels share one vertical gap", async () => {
   const style = await readFile(stylePath, "utf8");
 
-  // The vertical offset and the gap between tiles must stay identical.
+  // The offset below each panel and the gap between tiles must stay identical.
   assert.match(
     ruleBody(style, ".metrics-card"),
     /margin-top:\s*var\(--metrics-gap\)/,
   );
+  assert.match(
+    ruleBody(style, ".apikey-card"),
+    /margin-top:\s*var\(--metrics-gap\)/,
+  );
   assert.match(ruleBody(style, ".metrics"), /gap:\s*var\(--metrics-gap\)/);
+
+  // An empty status line must not silently widen the gap below its card.
+  assert.match(style, /#metrics-status:not\(:empty\)/);
+});
+
+test("the status dot lines up with the first line of the status text", async () => {
+  const style = await readFile(stylePath, "utf8");
+
+  // Centring the dot on the whole text block would drop it below the label.
+  const dot = ruleBody(style, ".status-dot");
+  assert.match(dot, /align-self:\s*start/);
+  assert.match(dot, /margin-top:\s*calc\(\(1lh - var\(--status-dot-size\)\) \/ 2\)/);
 });
 
 test("the metrics heading is gone and the list is named Notifications", async () => {
