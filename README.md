@@ -392,7 +392,7 @@ storing the answer in its secret storage. Add to `.vscode/mcp.json`:
 
 ```json
 {
-  "mcpServers": {
+  "servers": {
     "notification-cli": {
       "type": "http",
       "url": "https://<your-static-web-app>.azurestaticapps.net/api/mcp",
