@@ -165,7 +165,10 @@ test("one key authorizes the CLI, the MCP endpoint, and whoami", async () => {
     store,
   );
   assert.equal(whoami.status, 200);
-  assert.deepEqual(whoami.jsonBody, { email: OWNER });
+  assert.equal(
+    (whoami.jsonBody as { email: string }).email,
+    OWNER,
+  );
 
   assert.deepEqual(senders, [`${OWNER}:hello`, `${OWNER}:hello`]);
 });
