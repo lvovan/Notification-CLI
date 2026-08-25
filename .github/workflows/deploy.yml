@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: read
+  # Publishing to App Service exchanges this for an Azure access token.
+  id-token: write
 
 jobs:
   build-cli:
@@ -174,10 +176,29 @@ jobs:
       # The App Service host serves the same frontend and the same API, plus
       # the OAuth authorization server that MCP clients need. It is deployed
       # only once AZURE_APP_SERVICE_NAME names a site.
+      #
+      # Publishing uses the same OpenID Connect identity as the infrastructure
+      # workflow rather than a publish profile, because App Service now
+      # disables SCM basic authentication by default and a profile would be
+      # rejected with a 403.
+      - name: Sign in to Azure
+        if: ${{ vars.AZURE_APP_SERVICE_NAME != '' }}
+        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
       - name: Deploy App Service
         if: ${{ vars.AZURE_APP_SERVICE_NAME != '' }}
-        uses: Azure/webapps-deploy@02a81bead70021f5284939794bcec79c271ab383 # v3.0.8
-        with:
-          app-name: ${{ vars.AZURE_APP_SERVICE_NAME }}
-          publish-profile: ${{ secrets.AZURE_APP_SERVICE_PUBLISH_PROFILE }}
-          package: dist/server
+        env:
+          APP_NAME: ${{ vars.AZURE_APP_SERVICE_NAME }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'notification-cli' }}
+        run: |
+          (cd dist/server && zip -qr ../server.zip .)
+          az webapp deploy \
+            --name "$APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --src-path dist/server.zip \
+            --type zip \
+            --output none

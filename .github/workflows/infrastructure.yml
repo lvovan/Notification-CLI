@@ -166,7 +166,7 @@ jobs:
             if [ -n "$APP_NAME" ]; then
               echo "- App Service: \`$APP_NAME\` (https://$APP_HOSTNAME)"
               echo ""
-              echo "Set the AZURE_APP_SERVICE_NAME variable to \`$APP_NAME\` and store its publish profile as AZURE_APP_SERVICE_PUBLISH_PROFILE."
+              echo "Set the AZURE_APP_SERVICE_NAME variable to \`$APP_NAME\` so the deploy workflow publishes to it."
             fi
             echo ""
             echo "Refresh the deployment token secret, then run the deploy workflow:"
