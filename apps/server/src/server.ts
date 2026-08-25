@@ -59,7 +59,7 @@ async function dispatch(
     return true;
   }
 
-  const email = await options.session.resolve(message);
+  const email = route.anonymous ? undefined : await options.session.resolve(message);
   const injected = email ? { "x-ms-client-principal": clientPrincipal(email) } : {};
   const request = toCoreRequest(message, requestOrigin(message), injected);
   send(response, await route.handler(request, options.logger ?? console));

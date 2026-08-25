@@ -92,6 +92,11 @@ test("a missing sign-in setting is reported per request, not at startup", async 
     assert.deepEqual(await response.json(), {
       error: "NOTIFICATION_CLI_ENTRA_TENANT_ID is not configured.",
     });
+
+    // Discovery is anonymous, so it must answer even then: an MCP client has to
+    // be able to find the authorization server before anyone can sign in.
+    const discovery = await fetch(`http://127.0.0.1:${port}/.well-known/oauth-protected-resource`);
+    assert.equal(discovery.status, 200);
   } finally {
     await new Promise<void>((closed) => server.close(() => closed()));
   }

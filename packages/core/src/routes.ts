@@ -37,6 +37,12 @@ export interface CoreRoute {
   /** Path below the `/api` prefix, without a leading slash. */
   readonly path: string;
   readonly handler: CoreHandler;
+  /**
+   * The route never reads the signed-in identity, so a host must not resolve a
+   * session for it. Discovery and key-authenticated endpoints stay reachable on
+   * a deployment whose sign-in is not configured yet.
+   */
+  readonly anonymous?: boolean;
 }
 
 /**
@@ -51,7 +57,7 @@ export const API_ROUTES: readonly CoreRoute[] = [
   { method: "GET", path: "session", handler: (request) => handleSessionRequest(request) },
   {
     method: "POST",
-    path: "mcp",
+    path: "mcp", anonymous: true,
     handler: (request, logger) => handleMcpRequest(request, undefined, undefined, logger),
   },
   { method: "GET", path: "push/config", handler: (request) => handlePushConfigRequest(request) },
@@ -78,12 +84,12 @@ export const API_ROUTES: readonly CoreRoute[] = [
   },
   {
     method: "POST",
-    path: "notify",
+    path: "notify", anonymous: true,
     handler: (request, logger) => handleNotifyRequest(request, undefined, undefined, logger),
   },
   { method: "GET", path: "apikey", handler: (request) => handleApiKeyRequest(request) },
   { method: "POST", path: "apikey/cycle", handler: (request) => handleApiKeyCycleRequest(request) },
-  { method: "GET", path: "whoami", handler: (request) => handleWhoamiRequest(request) },
+  { method: "GET", path: "whoami", anonymous: true, handler: (request) => handleWhoamiRequest(request) },
 ];
 
 /**
@@ -96,26 +102,26 @@ export const API_ROUTES: readonly CoreRoute[] = [
 export const OAUTH_ROUTES: readonly CoreRoute[] = [
   {
     method: "GET",
-    path: "/.well-known/oauth-protected-resource",
+    path: "/.well-known/oauth-protected-resource", anonymous: true,
     handler: (request) => protectedResourceMetadata(requestOrigin(request)),
   },
   {
     method: "GET",
-    path: "/.well-known/oauth-protected-resource/api/mcp",
+    path: "/.well-known/oauth-protected-resource/api/mcp", anonymous: true,
     handler: (request) => protectedResourceMetadata(requestOrigin(request)),
   },
   {
     method: "GET",
-    path: "/.well-known/oauth-authorization-server",
+    path: "/.well-known/oauth-authorization-server", anonymous: true,
     handler: (request) => authorizationServerMetadata(requestOrigin(request)),
   },
   {
     method: "GET",
-    path: "/.well-known/openid-configuration",
+    path: "/.well-known/openid-configuration", anonymous: true,
     handler: (request) => authorizationServerMetadata(requestOrigin(request)),
   },
-  { method: "GET", path: "/oauth/jwks", handler: (request) => handleJwksRequest(request) },
-  { method: "POST", path: "/oauth/register", handler: (request) => handleRegisterRequest(request) },
+  { method: "GET", path: "/oauth/jwks", anonymous: true, handler: (request) => handleJwksRequest(request) },
+  { method: "POST", path: "/oauth/register", anonymous: true, handler: (request) => handleRegisterRequest(request) },
   {
     method: "GET",
     path: "/oauth/authorize",
@@ -126,5 +132,5 @@ export const OAUTH_ROUTES: readonly CoreRoute[] = [
     path: "/oauth/authorize",
     handler: (request) => handleAuthorizeDecision(request),
   },
-  { method: "POST", path: "/oauth/token", handler: (request) => handleTokenRequest(request) },
+  { method: "POST", path: "/oauth/token", anonymous: true, handler: (request) => handleTokenRequest(request) },
 ];
