@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { HttpRequest } from "@azure/functions";
+import type { CoreRequest } from "@notification-cli/core/http";
 import type { ApiKeyRecord, ApiKeyStore } from "@notification-cli/core/api-key-storage";
 import { resolveApiKeyOwner } from "@notification-cli/core/api-key";
 import { FanoutError, type FanoutReport } from "@notification-cli/core/fanout";
@@ -49,7 +49,10 @@ function keyStore(): ApiKeyStore {
 }
 
 function withHeaders(values: Record<string, string>) {
-  return { headers: new Headers(values) } as Pick<HttpRequest, "headers">;
+  return {
+    headers: new Headers(values),
+    url: "https://notify.example.com/api/mcp",
+  } as Pick<CoreRequest, "headers" | "url">;
 }
 
 const report: FanoutReport = {
@@ -162,8 +165,9 @@ test("one key authorizes the CLI, the MCP endpoint, and whoami", async () => {
   const notified = await handleNotifyRequest(
     {
       headers: new Headers({ "x-api-key": OWNER_KEY }),
+      url: "https://notify.example.com/api/mcp",
       json: async () => ({ message: "hello" }),
-    } as unknown as HttpRequest,
+    } as unknown as CoreRequest,
     env,
     fanOut,
     undefined,
@@ -181,7 +185,7 @@ test("one key authorizes the CLI, the MCP endpoint, and whoami", async () => {
   assert.equal(called.status ?? 200, 200);
 
   const whoami = await handleWhoamiRequest(
-    withHeaders({ "x-api-key": OWNER_KEY }) as HttpRequest,
+    withHeaders({ "x-api-key": OWNER_KEY }) as CoreRequest,
     env,
     store,
   );
@@ -197,9 +201,10 @@ test("the sender is taken from the key, never from the request body", async () =
   await handleNotifyRequest(
     {
       headers: new Headers({ "x-api-key": OTHER_KEY }),
+      url: "https://notify.example.com/api/mcp",
       // A caller trying to send as, or on behalf of, somebody else.
       json: async () => ({ message: "hello", email: OWNER, user: OWNER }),
-    } as unknown as HttpRequest,
+    } as unknown as CoreRequest,
     env,
     async (_message, owner) => {
       recipient = owner.email;
@@ -216,8 +221,9 @@ test("sender endpoints reject an unknown key", async () => {
   const notified = await handleNotifyRequest(
     {
       headers: new Headers({ "x-api-key": "ncli_nope" }),
+      url: "https://notify.example.com/api/mcp",
       json: async () => ({ message: "hello" }),
-    } as unknown as HttpRequest,
+    } as unknown as CoreRequest,
     env,
     async () => report,
     undefined,
@@ -226,16 +232,17 @@ test("sender endpoints reject an unknown key", async () => {
   assert.equal(notified.status, 401);
 
   const whoami = await handleWhoamiRequest(
-    withHeaders({ "x-api-key": "ncli_nope" }) as HttpRequest,
+    withHeaders({ "x-api-key": "ncli_nope" }) as CoreRequest,
     env,
     store,
   );
   assert.equal(whoami.status, 401);
 });
 
-function toolCallRequest(message: string, apiKey: string): HttpRequest {
+function toolCallRequest(message: string, apiKey: string): CoreRequest {
   return {
     headers: new Headers({ "x-api-key": apiKey }),
+      url: "https://notify.example.com/api/mcp",
     json: async () => ({
       jsonrpc: "2.0",
       id: 1,
@@ -245,7 +252,7 @@ function toolCallRequest(message: string, apiKey: string): HttpRequest {
         arguments: { message },
       },
     }),
-  } as unknown as HttpRequest;
+  } as unknown as CoreRequest;
 }
 
 test("send_notification uses shared fan-out and reports partial delivery", async () => {

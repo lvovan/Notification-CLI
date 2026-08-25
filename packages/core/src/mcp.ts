@@ -9,6 +9,12 @@ import {
   type FanoutReport,
 } from "./fanout.js";
 import type { NotificationOwner } from "./identity.js";
+import type { OAuthStore } from "./oauth-storage.js";
+
+/** Where a client is told to look for the authorization server (RFC 9728). */
+function protectedResourceMetadataUrl(url: string): string {
+  return `${new URL(url).origin}/.well-known/oauth-protected-resource/api/mcp`;
+}
 
 interface JsonRpcRequest {
   jsonrpc: "2.0";
@@ -76,13 +82,18 @@ export async function handleMcpRequest(
   ) => Promise<FanoutReport> = fanOutNotification,
   context?: CoreLogger,
   keys?: ApiKeyStore | null,
+  oauth?: OAuthStore | null,
 ): Promise<CoreResponse> {
   let owner: NotificationOwner;
   try {
-    const resolution = await resolveApiKeyOwner(request, env, keys);
+    const resolution = await resolveApiKeyOwner(request, env, keys, oauth);
     if (!resolution.authorized) {
+      // The challenge is how a client discovers where to obtain a token.
       return {
         status: 401,
+        headers: {
+          "WWW-Authenticate": `Bearer resource_metadata="${protectedResourceMetadataUrl(request.url)}"`,
+        },
         jsonBody: { error: "Unauthorized" },
       };
     }

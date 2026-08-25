@@ -16,6 +16,7 @@ const OTHER = "someone.else@example.com";
 const env = { AUTHORIZED_USERS: `${OWNER};${OTHER}` };
 const NOW = new Date("2026-03-15T12:00:00.000Z");
 const SCHEME = "Bearer";
+const MCP_URL = "https://notify.example.com/api/mcp";
 
 type Entity = Record<string, unknown> & {
   partitionKey: string;
@@ -232,6 +233,7 @@ test("a key stops resolving when its owner leaves AUTHORIZED_USERS", async () =>
   const keys = store(table);
   const minted = await keys.ensure(OTHER);
   const request = {
+    url: MCP_URL,
     headers: new Headers({ "x-api-key": minted.apiKey }),
   };
 
@@ -302,7 +304,7 @@ test("a bearer token authorizes exactly like the dedicated header", async () => 
 
   for (const name of ["authorization", "x-authorization"]) {
     const resolution = await resolveApiKeyOwner(
-      { headers: new Headers({ [name]: `${SCHEME} ${minted.apiKey}` }) },
+      { url: MCP_URL, headers: new Headers({ [name]: `${SCHEME} ${minted.apiKey}` }) },
       env,
       keys,
     );
@@ -310,7 +312,7 @@ test("a bearer token authorizes exactly like the dedicated header", async () => 
 
     assert.deepEqual(
       await resolveApiKeyOwner(
-        { headers: new Headers({ [name]: "Bearer ncli_wrong" }) },
+        { url: MCP_URL, headers: new Headers({ [name]: "Bearer ncli_wrong" }) },
         env,
         keys,
       ),
