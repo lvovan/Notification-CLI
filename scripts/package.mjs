@@ -24,11 +24,23 @@ await writeFile(
   `${JSON.stringify(packageJson, null, 2)}\n`,
 );
 
-// The bundle is ESM and has no runtime dependencies; without this Node would
-// parse main.js as CommonJS.
+// `type` keeps Node from parsing the ESM bundle as CommonJS. `main` and
+// `start` are what let App Service work out how to run it: with neither, the
+// platform finds no entry point it recognises and keeps serving its own
+// welcome page, which looks exactly like a failed deployment.
 await writeFile(
   resolve(output, "server/package.json"),
-  `${JSON.stringify({ name: "notification-cli-server", private: true, type: "module" }, null, 2)}\n`,
+  `${JSON.stringify(
+    {
+      name: "notification-cli-server",
+      private: true,
+      type: "module",
+      main: "dist/main.js",
+      scripts: { start: "node dist/main.js" },
+    },
+    null,
+    2,
+  )}\n`,
 );
 
 console.log("Packaged Static Web App and App Service artifacts in dist/");

@@ -135,6 +135,33 @@ a thin adapter over that table, so the two cannot drift apart.
    are bound to the origin that issued them, so pick one origin and use it
    everywhere.
 
+### If you created the site by hand
+
+The Bicep template configures everything below. A site created in the portal
+has none of it, and shows two symptoms in turn:
+
+- **Azure''s welcome page.** The platform found no entry point. The deployed
+  package declares `main` and an `npm start` script, so this only happens if
+  something other than `pnpm package` produced the payload. No startup command
+  is needed; setting one to `node dist/main.js` also works.
+- **`503` naming a setting.** The application is running and telling you which
+  application setting is missing. Set them all in one go:
+
+  ```powershell
+  az webapp config appsettings set --name <site> --resource-group <group> --settings `
+    NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING="<connection string>" `
+    NOTIFICATION_CLI_STORAGE_CONNECTION_STRING="<connection string>" `
+    AUTHORIZED_USERS="you@example.com" `
+    NOTIFICATION_CLI_ENTRA_TENANT_ID="<tenant>" `
+    NOTIFICATION_CLI_ENTRA_CLIENT_ID="<client>" `
+    NOTIFICATION_CLI_ENTRA_CLIENT_SECRET="<secret>" `
+    NOTIFICATION_CLI_SESSION_SECRET="<random>"
+  ```
+
+  Point the two connection strings at the **same** Web PubSub instance and
+  storage account the Static Web App uses. That is what makes the two hosts
+  interchangeable rather than two separate deployments.
+
 Do **not** enable App Service Easy Auth. It rejects any `Authorization` bearer
 it cannot validate with a `401`, even on excluded paths, which would break MCP
 before the application ever sees the request. Sign-in is implemented in

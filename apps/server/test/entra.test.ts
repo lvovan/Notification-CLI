@@ -2,14 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
 import type { AddressInfo } from "node:net";
+import { ConfigurationError } from "@notification-cli/core/configuration";
 import {
   createEntraSessionProvider,
   parseCookies,
   readEntraConfig,
-  ConfigurationError,
   type EntraConfig,
   type TokenExchange,
 } from "../src/entra.js";
+import { lazySessionProvider } from "../src/session.js";
 import { createNotificationServer } from "../src/server.js";
 
 const OWNER = "user@example.com";
@@ -71,6 +72,29 @@ async function signIn(origin: string, exchangeState?: (state: string) => string)
 
 test("the configuration must be complete", () => {
   assert.throws(() => readEntraConfig({}), ConfigurationError);
+  assert.throws(() => readEntraConfig({}), /NOTIFICATION_CLI_ENTRA_TENANT_ID is not configured/);
+});
+
+// An unconfigured site has to boot: App Service replaces a process that exits
+// with its own welcome page, which tells the operator nothing.
+test("a missing sign-in setting is reported per request, not at startup", async () => {
+  const server = createNotificationServer({
+    webRoot: process.cwd(),
+    session: lazySessionProvider(() => createEntraSessionProvider(readEntraConfig({}))),
+    logger: { error: () => {} },
+  });
+  await new Promise<void>((listening) => server.listen(0, "127.0.0.1", listening));
+  const { port } = server.address() as AddressInfo;
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/session`);
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), {
+      error: "NOTIFICATION_CLI_ENTRA_TENANT_ID is not configured.",
+    });
+  } finally {
+    await new Promise<void>((closed) => server.close(() => closed()));
+  }
 });
 
 test("sign-in starts a PKCE code flow bound to a sealed cookie", async () => {

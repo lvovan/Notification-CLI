@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { requireSetting } from "@notification-cli/core/configuration";
 import { requestOrigin } from "./request.js";
 import { GLOBAL_HEADERS } from "./response.js";
 import { clientPrincipal, type SessionProvider } from "./session.js";
@@ -22,22 +23,12 @@ export interface EntraConfig {
   sessionSecret: string;
 }
 
-export class ConfigurationError extends Error {}
-
-function required(env: NodeJS.ProcessEnv, name: string): string {
-  const value = env[name]?.trim();
-  if (!value) {
-    throw new ConfigurationError(`${name} is not configured.`);
-  }
-  return value;
-}
-
 export function readEntraConfig(env: NodeJS.ProcessEnv = process.env): EntraConfig {
   return {
-    tenantId: required(env, TENANT_ID_ENV),
-    clientId: required(env, CLIENT_ID_ENV),
-    clientSecret: required(env, CLIENT_SECRET_ENV),
-    sessionSecret: required(env, SESSION_SECRET_ENV),
+    tenantId: requireSetting(env, TENANT_ID_ENV),
+    clientId: requireSetting(env, CLIENT_ID_ENV),
+    clientSecret: requireSetting(env, CLIENT_SECRET_ENV),
+    sessionSecret: requireSetting(env, SESSION_SECRET_ENV),
   };
 }
 

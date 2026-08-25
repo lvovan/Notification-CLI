@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 
@@ -19,6 +19,15 @@ const requiredFiles = [
 ];
 
 await Promise.all(requiredFiles.map((file) => access(file)));
+
+// App Service runs `npm start`. Without it the package deploys cleanly and
+// then serves the platform's welcome page instead of the application.
+const serverManifest = JSON.parse(
+  await readFile("dist/server/package.json", "utf8"),
+);
+if (serverManifest.scripts?.start !== "node dist/main.js") {
+  throw new Error("Packaged server has no start script for App Service");
+}
 
 const apiStartup = spawnSync(process.execPath, ["dist/api/index.js"], {
   encoding: "utf8",

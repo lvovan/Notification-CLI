@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { ConfigurationError } from "@notification-cli/core/configuration";
 import type { CoreLogger } from "@notification-cli/core/http";
 import { API_ROUTES, OAUTH_ROUTES, type CoreRoute } from "@notification-cli/core/routes";
 import { requestOrigin, toCoreRequest } from "./request.js";
@@ -122,15 +123,23 @@ export function createRequestListener(
         await serveApplication(message, response, url, options);
       } catch (error) {
         logger.error(`Unhandled request failure: ${String(error)}`);
-        if (!response.headersSent) {
-          send(response, {
-            status: 500,
-            headers: NO_STORE,
-            jsonBody: { error: "The request could not be completed." },
-          });
-        } else {
+        if (response.headersSent) {
           response.end();
+          return;
         }
+        // A missing application setting is the operator's problem, not the
+        // caller's, and naming it is the difference between a five-minute fix
+        // and an afternoon of guessing.
+        send(
+          response,
+          error instanceof ConfigurationError
+            ? { status: 503, headers: NO_STORE, jsonBody: { error: error.message } }
+            : {
+                status: 500,
+                headers: NO_STORE,
+                jsonBody: { error: "The request could not be completed." },
+              },
+        );
       }
     })();
   };

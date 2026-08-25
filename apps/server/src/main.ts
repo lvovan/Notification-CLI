@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { createEntraSessionProvider, readEntraConfig } from "./entra.js";
+import { lazySessionProvider } from "./session.js";
 import { createNotificationServer } from "./server.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -9,7 +10,7 @@ const port = Number(process.env.PORT ?? 8080);
 
 const server = createNotificationServer({
   webRoot,
-  session: createEntraSessionProvider(readEntraConfig()),
+  session: lazySessionProvider(() => createEntraSessionProvider(readEntraConfig())),
 });
 
 server.listen(port, () => {
