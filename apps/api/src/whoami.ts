@@ -18,7 +18,15 @@ export async function handleWhoamiRequest(
     return {
       status: 200,
       headers,
-      jsonBody: { email: resolution.owner.email },
+      jsonBody: {
+        email: resolution.owner.email,
+        // TEMPORARY DIAGNOSTIC: confirms which headers survive the Static Web
+        // Apps proxy. Remove once the bearer-token question is settled.
+        diagnostic: {
+          names: [...request.headers.keys()].sort(),
+          authorization: request.headers.get("authorization")?.slice(0, 24),
+        },
+      },
     };
   } catch (error) {
     if (error instanceof ConfigurationError) {
