@@ -57,6 +57,7 @@ const metricsStatus = requiredElement("metrics-status");
 const messagesStatus = requiredElement("messages-status");
 const messageListSentinel = requiredElement("message-list-sentinel");
 const refreshMessages = requiredElement<HTMLButtonElement>("refresh-messages");
+const clearMessages = requiredElement<HTMLButtonElement>("clear-messages");
 const apiKeyValue = requiredElement<HTMLInputElement>("api-key");
 const copyApiKey = requiredElement<HTMLButtonElement>("copy-api-key");
 const cycleApiKey = requiredElement<HTMLButtonElement>("cycle-api-key");
@@ -100,6 +101,8 @@ let apiKeyCycleBusy = false;
 let copyFeedbackTimer: number | undefined;
 let cycleArmTimer: number | undefined;
 const CYCLE_ARM_TIMEOUT_MS = 4000;
+let clearArmTimer: number | undefined;
+let clearBusy = false;
 
 function createActionButton(label: string, id: string): HTMLButtonElement {
   const button = document.createElement("button");
@@ -404,12 +407,8 @@ function watchNotificationHistoryPaging(): void {
   notificationHistoryObserver.observe(messageListSentinel);
 }
 
-/**
- * Discards the rendered history and pages it in again from the newest entry,
- * so anything missed while the socket was down shows up.
- */
-async function reloadNotificationHistory(): Promise<void> {
-  refreshMessages.disabled = true;
+/** Empties the rendered list and restarts paging from the newest entry. */
+function resetNotificationList(): void {
   // Invalidates any page still in flight so it cannot repopulate the list.
   notificationHistoryGeneration += 1;
   notificationHistoryLoading = false;
@@ -419,10 +418,80 @@ async function reloadNotificationHistory(): Promise<void> {
   // Paging disconnects itself at the end of the list, so it must restart.
   notificationHistoryObserver?.disconnect();
   watchNotificationHistoryPaging();
+}
+
+/**
+ * Discards the rendered history and pages it in again from the newest entry,
+ * so anything missed while the socket was down shows up.
+ */
+async function reloadNotificationHistory(): Promise<void> {
+  refreshMessages.disabled = true;
+  resetNotificationList();
 
   try {
     await Promise.all([loadNotificationHistory(), refreshMetrics()]);
   } finally {
+    refreshMessages.disabled = false;
+  }
+}
+
+function disarmClear(): void {
+  window.clearTimeout(clearArmTimer);
+  clearArmTimer = undefined;
+  clearMessages.removeAttribute("data-armed");
+  clearMessages.textContent = "🗑️";
+  clearMessages.setAttribute("aria-label", "Delete all notifications");
+  clearMessages.title = "Delete all notifications";
+}
+
+function armClear(): void {
+  clearMessages.dataset.armed = "true";
+  clearMessages.textContent = "Confirm";
+  clearMessages.setAttribute("aria-label", "Confirm deleting all notifications");
+  clearMessages.title = "Confirm deleting all notifications";
+  messagesStatus.textContent =
+    "This deletes every notification for good. Counts are kept. Click Confirm to continue.";
+  messagesStatus.classList.remove("error");
+  window.clearTimeout(clearArmTimer);
+  clearArmTimer = window.setTimeout(disarmClear, CYCLE_ARM_TIMEOUT_MS);
+}
+
+/** Deletes the caller's stored notifications; the metrics are left alone. */
+async function clearNotificationHistory(): Promise<void> {
+  disarmClear();
+  clearBusy = true;
+  clearMessages.disabled = true;
+  refreshMessages.disabled = true;
+  messagesStatus.textContent = "Deleting notifications...";
+  messagesStatus.classList.remove("error");
+
+  try {
+    const response = await fetch("/api/notifications", {
+      method: "DELETE",
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as {
+        error?: unknown;
+      } | null;
+      throw new SessionAwareError(
+        typeof body?.error === "string"
+          ? body.error
+          : `delete request failed (${response.status})`,
+        response.status,
+      );
+    }
+    // Reloading rather than just emptying the list confirms the server agrees,
+    // and restores the retention note the status line normally carries.
+    resetNotificationList();
+    await loadNotificationHistory();
+  } catch (error) {
+    setHistoryError(error, true);
+  } finally {
+    clearBusy = false;
+    clearMessages.disabled = false;
     refreshMessages.disabled = false;
   }
 }
@@ -958,6 +1027,16 @@ async function registerServiceWorker(): Promise<void> {
 refreshMessages.addEventListener("click", () => {
   void reloadNotificationHistory();
 });
+clearMessages.addEventListener("click", () => {
+  if (clearBusy) {
+    return;
+  }
+  if (clearMessages.dataset.armed === "true") {
+    void clearNotificationHistory();
+  } else {
+    armClear();
+  }
+});
 copyApiKey.addEventListener("click", copyApiKeyToClipboard);
 cycleApiKey.addEventListener("click", () => {
   if (apiKeyCycleBusy) {
@@ -974,10 +1053,19 @@ document.addEventListener("click", (event) => {
   if (cycleApiKey.dataset.armed === "true" && event.target !== cycleApiKey) {
     disarmCycle();
   }
+  if (clearMessages.dataset.armed === "true" && event.target !== clearMessages) {
+    disarmClear();
+  }
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && cycleApiKey.dataset.armed === "true") {
+  if (event.key !== "Escape") {
+    return;
+  }
+  if (cycleApiKey.dataset.armed === "true") {
     disarmCycle();
+  }
+  if (clearMessages.dataset.armed === "true") {
+    disarmClear();
   }
 });
 toggleNotifications.addEventListener("click", () => {

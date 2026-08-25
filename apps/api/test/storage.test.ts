@@ -406,3 +406,29 @@ test("parseNotificationCursor rejects malformed cursors", () => {
     );
   }
 });
+
+test("clearing empties one partition regardless of retention", async () => {
+  const { store, table } = historyStore();
+  // Spread across the retention boundary: a clear is not a prune, so an entry
+  // far older than the window must go too.
+  await store.append(OWNER, notification("fresh", NOW.getTime()));
+  await store.append(OWNER, notification("stale", NOW.getTime() - 90 * DAY_MS));
+  await store.append(OTHER, notification("theirs", NOW.getTime()));
+
+  const deleted = await store.clear(OWNER);
+
+  assert.equal(deleted, 2);
+  assert.deepEqual(await drain(store, OWNER), []);
+  assert.deepEqual(
+    (await drain(store, OTHER)).map((entry) => entry.id),
+    ["theirs"],
+    "clearing must never reach another partition",
+  );
+  assert.equal(table.rows.size, 1);
+});
+
+test("clearing an empty partition is a no-op", async () => {
+  const { store } = historyStore();
+
+  assert.equal(await store.clear(OWNER), 0);
+});

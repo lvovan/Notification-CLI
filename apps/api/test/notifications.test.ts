@@ -4,6 +4,7 @@ import type { HttpRequest } from "@azure/functions";
 import { ConfigurationError } from "../src/configuration.js";
 import { fanOutNotification } from "../src/fanout.js";
 import { notificationOwner, userGroup, userKey } from "../src/identity.js";
+import { handleMetricsRequest } from "../src/metrics.js";
 import {
   DEFAULT_RETENTION_DAYS,
   DEFAULT_NOTIFICATION_PAGE_LIMIT,
@@ -14,7 +15,10 @@ import {
   type StoredNotification,
   notificationCursor,
 } from "../src/notification-storage.js";
-import { handleNotificationsRequest } from "../src/notifications.js";
+import {
+  handleClearNotificationsRequest,
+  handleNotificationsRequest,
+} from "../src/notifications.js";
 
 const NOW = new Date("2026-03-15T12:00:00.000Z");
 const OWNER = "user@example.com";
@@ -118,6 +122,12 @@ class MemoryHistoryStore implements NotificationHistoryStore {
     this.pruned.push({ userKey: partition, now, retentionDays });
     return 3;
   }
+
+  async clear(partition: string): Promise<number> {
+    const removed = this.partitions.get(partition)?.length ?? 0;
+    this.partitions.delete(partition);
+    return removed;
+  }
 }
 
 const noMetrics = {
@@ -190,6 +200,7 @@ test("a retention failure never fails a delivered notification", async () => {
       },
       list: async () => ({ notifications: [], nextCursor: null }),
       prune: async () => 0,
+      clear: async () => 0,
     },
   });
 
@@ -405,4 +416,73 @@ test("same-millisecond notifications page across the id tiebreak", async () => {
 
   assert.deepEqual(seen, ["c", "b", "a"]);
   assert.equal(cursor, null);
+});
+
+test("clearing removes only the caller's notifications", async () => {
+  const store = new MemoryHistoryStore();
+  await store.append(userKey(OWNER), notification("mine", NOW.getTime()));
+  await store.append(userKey(OTHER), notification("theirs", NOW.getTime()));
+  const env = { AUTHORIZED_USERS: `${OWNER};${OTHER}` };
+
+  const response = await handleClearNotificationsRequest(
+    signedIn(OWNER),
+    env,
+    store,
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.jsonBody, { deleted: 1 });
+  assert.deepEqual(store.entries(userKey(OWNER)), []);
+  assert.deepEqual(
+    store.entries(userKey(OTHER)).map((entry) => entry.id),
+    ["theirs"],
+    "another account's history must survive",
+  );
+});
+
+test("clearing leaves the metrics untouched", async () => {
+  const history = new MemoryHistoryStore();
+  await history.append(userKey(OWNER), notification("mine", NOW.getTime()));
+  const counts = { last24Hours: 4, last7Days: 9, last30Days: 12, total: 40 };
+  const metrics = {
+    record: async () => undefined,
+    counts: async () => counts,
+  };
+  const env = { AUTHORIZED_USERS: OWNER };
+
+  await handleClearNotificationsRequest(signedIn(OWNER), env, history);
+
+  // Counters live in their own store, and the clear endpoint is not even given
+  // one, so a request served afterwards still reports every send ever made.
+  const after = await handleMetricsRequest(signedIn(OWNER), env, metrics);
+  assert.equal(after.status, 200);
+  assert.deepEqual(after.jsonBody, counts);
+});
+
+test("clearing refuses an unauthenticated or unauthorized caller", async () => {
+  const store = new MemoryHistoryStore();
+  await store.append(userKey(OWNER), notification("mine", NOW.getTime()));
+
+  const anonymous = await handleClearNotificationsRequest(request({}), {}, store);
+  assert.equal(anonymous.status, 401);
+
+  const stranger = await handleClearNotificationsRequest(
+    signedIn(OTHER),
+    { AUTHORIZED_USERS: OWNER },
+    store,
+  );
+  assert.equal(stranger.status, 403);
+
+  assert.equal(store.entries(userKey(OWNER)).length, 1);
+});
+
+test("clearing reports storage that is not configured", async () => {
+  const response = await handleClearNotificationsRequest(
+    signedIn(OWNER),
+    { AUTHORIZED_USERS: OWNER },
+    null,
+  );
+
+  assert.equal(response.status, 503);
+  assert.match(response.jsonBody.error, /NOTIFICATION_CLI_STORAGE/);
 });

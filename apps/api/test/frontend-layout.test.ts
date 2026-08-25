@@ -97,3 +97,49 @@ test("refreshing restarts paging from the newest notification", async () => {
   assert.match(main, /notificationHistoryGeneration \+= 1/);
   assert.match(main, /generation !== notificationHistoryGeneration/);
 });
+
+test("the notifications heading carries a right-aligned delete control", async () => {
+  const [html, style] = await Promise.all([
+    readFile(htmlPath, "utf8"),
+    readFile(stylePath, "utf8"),
+  ]);
+
+  const heading =
+    /<div class="section-heading">([\s\S]*?)<\/div>/.exec(html)?.[1] ?? "";
+  assert.match(heading, /id="clear-messages"/);
+  assert.match(heading, /class="heading-action"/);
+  assert.match(heading, /aria-label="Delete all notifications"/);
+  assert.match(heading, /\u{1F5D1}/u);
+  // The heading comes first and the row spreads them apart, which is what puts
+  // the control on the right without any extra positioning.
+  assert.ok(
+    heading.indexOf("messages-title") < heading.indexOf("clear-messages"),
+  );
+  assert.match(
+    ruleBody(style, ".section-heading"),
+    /justify-content:\s*space-between/,
+  );
+});
+
+test("deleting every notification needs a confirmation and keeps the counts", async () => {
+  const main = await readFile(mainPath, "utf8");
+
+  // First click arms, second click deletes; the same two-step used for the key.
+  assert.match(main, /clearMessages\.addEventListener\("click"/);
+  assert.match(main, /clearMessages\.dataset\.armed === "true"/);
+  assert.match(main, /armClear\(\)/);
+  assert.match(main, /disarmClear\(\)/);
+
+  // Deletion is a DELETE on the history endpoint; nothing touches the metrics.
+  const clear =
+    /async function clearNotificationHistory\(\)[\s\S]*?\r?\n\}\r?\n/.exec(
+      main,
+    )?.[0] ?? "";
+  assert.ok(clear, "missing clearNotificationHistory");
+  assert.match(clear, /"\/api\/notifications"/);
+  assert.match(clear, /method: "DELETE"/);
+  assert.ok(
+    !clear.includes("refreshMetrics"),
+    "clearing must not reset the metrics",
+  );
+});

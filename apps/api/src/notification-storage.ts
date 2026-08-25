@@ -42,6 +42,7 @@ export interface NotificationHistoryStore {
     options?: NotificationListOptions,
   ): Promise<NotificationPage>;
   prune(userKey: string, now: Date, retentionDays: number): Promise<number>;
+  clear(userKey: string): Promise<number>;
 }
 
 /**
@@ -198,13 +199,28 @@ export class AzureTableNotificationHistoryStore
     now: Date,
     retentionDays: number,
   ): Promise<number> {
-    await ensureTable(this.client);
     // The complement of list()'s bound: everything at or past it is prunable.
-    const filter = odata`PartitionKey eq ${userKey} and RowKey ge ${retentionBound(
-      now,
-      retentionDays,
-    )}`;
-    const expired: Array<{ partitionKey: string; rowKey: string }> = [];
+    return this.deleteWhere(
+      odata`PartitionKey eq ${userKey} and RowKey ge ${retentionBound(
+        now,
+        retentionDays,
+      )}`,
+    );
+  }
+
+  /**
+   * Empties the caller's history. Metrics live in their own table and are
+   * deliberately untouched, so the counters still describe everything ever
+   * sent.
+   */
+  async clear(userKey: string): Promise<number> {
+    return this.deleteWhere(odata`PartitionKey eq ${userKey}`);
+  }
+
+  /** Deletes every row a filter selects, in bounded parallel batches. */
+  private async deleteWhere(filter: string): Promise<number> {
+    await ensureTable(this.client);
+    const doomed: Array<{ partitionKey: string; rowKey: string }> = [];
     const entities = this.client.listEntities<{
       partitionKey?: string;
       rowKey?: string;
@@ -213,7 +229,7 @@ export class AzureTableNotificationHistoryStore
     });
     for await (const entity of entities) {
       if (entity.partitionKey && entity.rowKey) {
-        expired.push({
+        doomed.push({
           partitionKey: entity.partitionKey,
           rowKey: entity.rowKey,
         });
@@ -221,12 +237,8 @@ export class AzureTableNotificationHistoryStore
     }
 
     let deleted = 0;
-    for (
-      let index = 0;
-      index < expired.length;
-      index += DELETE_CONCURRENCY
-    ) {
-      const batch = expired.slice(index, index + DELETE_CONCURRENCY);
+    for (let index = 0; index < doomed.length; index += DELETE_CONCURRENCY) {
+      const batch = doomed.slice(index, index + DELETE_CONCURRENCY);
       await Promise.all(
         batch.map(async ({ partitionKey, rowKey }) => {
           try {

@@ -43,6 +43,16 @@ function parseLimit(value: string | null): number {
   return limit;
 }
 
+function storageUnavailable(): HttpResponseInit {
+  return {
+    status: 503,
+    headers: NO_STORE,
+    jsonBody: {
+      error: `${STORAGE_CONNECTION_STRING_ENV} is not configured.`,
+    },
+  };
+}
+
 export async function handleNotificationsRequest(
   request: HttpRequest,
   env: NodeJS.ProcessEnv = process.env,
@@ -77,13 +87,7 @@ export async function handleNotificationsRequest(
   const history =
     store === undefined ? tryCreateNotificationHistoryStore(env) : store;
   if (!history) {
-    return {
-      status: 503,
-      headers: NO_STORE,
-      jsonBody: {
-        error: `${STORAGE_CONNECTION_STRING_ENV} is not configured.`,
-      },
-    };
+    return storageUnavailable();
   }
 
   try {
@@ -105,6 +109,46 @@ export async function handleNotificationsRequest(
           },
         )),
       },
+    };
+  } catch (error) {
+    if (error instanceof ConfigurationError) {
+      return {
+        status: 503,
+        headers: NO_STORE,
+        jsonBody: { error: error.message },
+      };
+    }
+    throw error;
+  }
+}
+
+/**
+ * Empties the caller's notification history. The partition comes from the
+ * signed-in principal, so a caller can only ever clear their own. Metrics live
+ * in their own table and are deliberately untouched: the counters describe
+ * everything ever sent, not what is currently listed.
+ */
+export async function handleClearNotificationsRequest(
+  request: HttpRequest,
+  env: NodeJS.ProcessEnv = process.env,
+  store?: NotificationHistoryStore | null,
+): Promise<HttpResponseInit> {
+  const authorization = authorizeBrowserRequest(request, env);
+  if (!authorization.authorized) {
+    return browserAuthorizationError(authorization);
+  }
+
+  const history =
+    store === undefined ? tryCreateNotificationHistoryStore(env) : store;
+  if (!history) {
+    return storageUnavailable();
+  }
+
+  try {
+    return {
+      status: 200,
+      headers: NO_STORE,
+      jsonBody: { deleted: await history.clear(userKey(authorization.email)) },
     };
   } catch (error) {
     if (error instanceof ConfigurationError) {

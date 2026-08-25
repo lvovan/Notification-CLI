@@ -321,7 +321,7 @@ dismissed too quickly can still be opened again. Set
 `365` to change the window.
 
 Each notification is stored in the `NotificationHistory` table, partitioned by
-UTC day. `GET /api/notifications?limit=<n>&before=<cursor>` returns one page
+the recipient. `GET /api/notifications?limit=<n>&before=<cursor>` returns one page
 of retained notifications together with the effective `retentionDays`.
 Notifications are newest-first, and `nextCursor` is `null` on the last page.
 `limit` is optional, defaults to `5`, and is capped at `50`; invalid values
@@ -345,25 +345,34 @@ The successful response keeps the same envelope on every page:
 
 Paging keeps the endpoint bounded. Returning the whole retention window in one
 response would make each request slower and more memory-hungry as history
-grows. Azure Table Storage can efficiently read rows inside known partition and
-key ranges, but it cannot sort the full table descending on the server. Because
-history rows are partitioned by UTC day, the API walks day partitions from
-newest to oldest and stops as soon as it has filled the requested page. That
-shape matches the storage layout and avoids loading the whole window into
-memory.
+grows. Azure Table Storage returns rows ascending by row key and cannot sort a
+table on the server, so each row key embeds the send time subtracted from a
+fixed upper bound. Ascending order over those keys *is* newest-first, which
+turns both paging and pruning into single range queries inside the caller's
+partition.
 
 The frontend initially loads the five newest notifications. An
 IntersectionObserver sentinel at the bottom of the list asks for older pages as
 the user scrolls, so the page can expose retained history without rendering the
-whole retention window at once.
+whole retention window at once. Selecting the underlined **NOTIFICATIONS**
+heading reloads the list from the newest page.
+
+`DELETE /api/notifications` removes every notification belonging to the
+signed-in account and answers `{ "deleted": <count> }`. Like the read endpoint
+it is gated by Microsoft account authentication, never reachable with an API
+key, and scoped to the caller's own partition. The 🗑️ control on the
+notifications heading calls it behind a two-step confirmation: the first click
+arms the button, a second within four seconds deletes.
 
 The sweep is lazy: every accepted send appends the new notification and then
-deletes the day partitions that have fallen outside the retention window, so no
-timer or extra Azure resource is needed. Retention is day-granular, which keeps
-listing and pruning in agreement about exactly which partitions survive.
+deletes that user's rows that have fallen outside the retention window, so no
+timer or extra Azure resource is needed. Listing and pruning share one exact
+millisecond cutoff, so a notification is readable if and only if it survives the
+sweep.
 
 Metrics are deliberately kept in a separate table and are **not** affected by
-this deletion. The counts for the last 7 and 30 days, and the lifetime total,
+either deletion — neither the retention sweep nor an explicit clear. The counts
+for the last 7 and 30 days, and the lifetime total,
 stay correct even when the notification bodies behind them have been swept
 away. Retention is best-effort in the same way metrics are: a storage failure
 is reported in `delivery.historyError` and never turns a delivered notification

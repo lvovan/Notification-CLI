@@ -455,6 +455,46 @@ a {
   opacity: 0.5;
 }
 
+/* Sits opposite the section title; sized to the heading rather than the taller
+   API key controls, so the row stays visually level. */
+.heading-action {
+  display: grid;
+  width: 1.9rem;
+  height: 1.9rem;
+  place-items: center;
+  border: 1px solid var(--cp-border);
+  border-radius: 0.625rem;
+  background: var(--cp-surface-soft);
+  color: var(--cp-text);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.heading-action:hover:not(:disabled),
+.heading-action:focus-visible {
+  border-color: var(--cp-border-strong);
+  background: var(--cp-accent-soft);
+}
+
+.heading-action:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+/* The armed control spells out "Confirm", so it needs room to grow. */
+.heading-action[data-armed="true"] {
+  width: auto;
+  padding: 0 0.7rem;
+  border-color: var(--cp-accent);
+  color: var(--cp-accent);
+  background: var(--cp-accent-soft);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
 h2 {
   font-size: 1rem;
   letter-spacing: 0.02em;

@@ -69,7 +69,8 @@ test("cycling requires an in-page two-step confirm rather than window.confirm", 
   assert.match(main, /dataset\.armed = "true"/);
   assert.match(main, /cycleApiKey\.dataset\.armed === "true"/);
   // Escape and an outside click both disarm the pending confirmation.
-  assert.match(main, /event\.key === "Escape"/);
+  assert.match(main, /event\.key !== "Escape"/);
+  assert.match(main, /disarmCycle\(\)/);
   // The request disables the controls while it is in flight.
   assert.match(main, /cycleApiKey\.disabled = true/);
 });
