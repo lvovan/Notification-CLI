@@ -10,6 +10,7 @@
     "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
+    "@azure/msal-node": "^5.5.0",
     "@notification-cli/core": "workspace:*"
   },
   "devDependencies": {

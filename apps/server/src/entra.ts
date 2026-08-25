@@ -1,5 +1,12 @@
-import { createHmac, randomBytes, createHash, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import {
+  ConfidentialClientApplication,
+  CryptoProvider,
+  PublicClientApplication,
+  type ClientAssertionCallback,
+  type NodeAuthOptions,
+} from "@azure/msal-node";
 import { requireSetting } from "@notification-cli/core/configuration";
 import { requestOrigin } from "./request.js";
 import { GLOBAL_HEADERS } from "./response.js";
@@ -12,12 +19,13 @@ export const SESSION_SECRET_ENV = "NOTIFICATION_CLI_SESSION_SECRET";
 
 /** The audience Entra ID requires of a federated client assertion. */
 const TOKEN_EXCHANGE_AUDIENCE = "api://AzureADTokenExchange";
-const CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
 const SESSION_COOKIE = "ncli_session";
 const FLOW_COOKIE = "ncli_flow";
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
-const FLOW_TTL_SECONDS = 10 * 60;
+// Long enough to survive consent, MFA and a password change without the reply
+// arriving after the flow cookie has already lapsed.
+const FLOW_TTL_SECONDS = 30 * 60;
 const CALLBACK_PATH = "/.auth/login/aad/callback";
 
 export interface EntraConfig {
@@ -50,17 +58,16 @@ export function readEntraConfig(env: NodeJS.ProcessEnv = process.env): EntraConf
  * 2. A federated assertion from the App Service managed identity, for a tenant
  *    whose policy blocks secrets. Nothing secret is stored and nothing expires.
  * 3. Nothing at all. The authorization code is already bound to this server by
- *    PKCE, so a public-client registration needs no credential — which is the
- *    simplest arrangement and the only one that needs no Azure-side plumbing.
+ *    PKCE, so a public-client registration needs no credential — the simplest
+ *    arrangement, and the only one needing no Azure-side plumbing.
  */
-export type AssertionSource = () => Promise<string | null>;
+export type AssertionSource = () => Promise<string>;
 
-/** Null rather than throwing: no identity endpoint just means no assertion. */
 const managedIdentityAssertion: AssertionSource = async () => {
   const endpoint = process.env.IDENTITY_ENDPOINT;
   const header = process.env.IDENTITY_HEADER;
   if (!endpoint || !header) {
-    return null;
+    throw new Error("No managed identity is available to authenticate with.");
   }
   const url = new URL(endpoint);
   url.searchParams.set("resource", TOKEN_EXCHANGE_AUDIENCE);
@@ -77,17 +84,21 @@ const managedIdentityAssertion: AssertionSource = async () => {
   return token;
 };
 
-export async function clientCredential(
+/** The credential half of the MSAL configuration, which may be empty. */
+export function clientCredential(
   config: EntraConfig,
   assertion: AssertionSource = managedIdentityAssertion,
-): Promise<Record<string, string>> {
+  env: NodeJS.ProcessEnv = process.env,
+): Partial<Pick<NodeAuthOptions, "clientSecret" | "clientAssertion">> {
   if (config.clientSecret) {
-    return { client_secret: config.clientSecret };
+    return { clientSecret: config.clientSecret };
   }
-  const token = await assertion();
-  return token ? { client_assertion_type: CLIENT_ASSERTION_TYPE, client_assertion: token } : {};
+  if (env.IDENTITY_ENDPOINT && env.IDENTITY_HEADER) {
+    const callback: ClientAssertionCallback = () => assertion();
+    return { clientAssertion: callback };
+  }
+  return {};
 }
-
 function base64url(value: Buffer | string): string {
   return Buffer.from(value).toString("base64url");
 }
@@ -187,103 +198,123 @@ function safeRedirect(value: string | null): string {
   return value;
 }
 
-function emailFromIdToken(idToken: string): string | null {
-  const payload = idToken.split(".")[1];
-  if (!payload) {
-    return null;
-  }
-  try {
-    const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<
-      string,
-      unknown
-    >;
-    for (const name of ["email", "preferred_username", "upn"]) {
-      const value = claims[name];
-      if (typeof value === "string" && value.includes("@")) {
-        return value.trim().toLowerCase();
-      }
+/**
+ * The address, preferring the claim that is actually an address.
+ *
+ * A work account without a `mail` attribute has no `email` claim, and a
+ * personal account has no `upn`, so all three have to be tried.
+ */
+function emailFromClaims(claims: Record<string, unknown>): string | null {
+  for (const name of ["email", "preferred_username", "upn"]) {
+    const value = claims[name];
+    if (typeof value === "string" && value.includes("@")) {
+      return value.trim().toLowerCase();
     }
-  } catch {
-    return null;
   }
   return null;
 }
 
-export type TokenExchange = (
-  config: EntraConfig,
-  body: URLSearchParams,
-) => Promise<{ id_token?: string }>;
-
-const exchangeWithEntra: TokenExchange = async (config, body) => {
-  const response = await fetch(
-    `https://login.microsoftonline.com/${config.tenantId}/oauth2/v2.0/token`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-    },
-  );
-  if (!response.ok) {
-    // The description names the actual defect — a redirect URI registered
-    // under the wrong platform, an expired secret, a rejected assertion —
-    // and guessing at it from the status alone is hopeless.
-    const detail = await response.text();
-    let description: string | undefined;
-    try {
-      description = (JSON.parse(detail) as { error_description?: string }).error_description;
-    } catch {
-      description = undefined;
-    }
-    throw new Error(
-      `Entra token exchange failed with ${response.status}: ${description ?? detail}`,
-    );
-  }
-  return (await response.json()) as { id_token?: string };
-};
-
 /**
- * Signs users in against Entra ID directly.
+ * The sign-in protocol, behind a port so tests never reach Entra ID.
+ *
+ * MSAL owns the protocol itself — the authorize URL, the code exchange, and
+ * the validation of what comes back. This server only owns what MSAL does not:
+ * correlating the two legs across a stateless process, which it does with the
+ * sealed flow cookie below.
+ */
+export interface AuthClient {
+  authorizeUrl(request: {
+    redirectUri: string;
+    state: string;
+    codeChallenge: string;
+  }): Promise<string>;
+  redeemCode(request: {
+    redirectUri: string;
+    code: string;
+    state: string;
+    codeVerifier: string;
+  }): Promise<Record<string, unknown>>;
+}
+
+const SCOPES = ["openid", "profile", "email"];
+
+export function createMsalAuthClient(
+  config: EntraConfig,
+  assertion: AssertionSource = managedIdentityAssertion,
+): AuthClient {
+  const auth: NodeAuthOptions = {
+    clientId: config.clientId,
+    authority: `https://login.microsoftonline.com/${config.tenantId}`,
+    ...clientCredential(config, assertion),
+  };
+  // Without a credential the registration is a public client, and MSAL
+  // refuses to be a confidential one — correctly, since it would then send an
+  // empty secret and be rejected.
+  const application =
+    auth.clientSecret || auth.clientAssertion
+      ? new ConfidentialClientApplication({ auth })
+      : new PublicClientApplication({ auth });
+
+  return {
+    authorizeUrl: (request) =>
+      application.getAuthCodeUrl({
+        scopes: SCOPES,
+        redirectUri: request.redirectUri,
+        state: request.state,
+        codeChallenge: request.codeChallenge,
+        codeChallengeMethod: "S256",
+      }),
+    redeemCode: async (request) => {
+      const result = await application.acquireTokenByCode({
+        scopes: SCOPES,
+        redirectUri: request.redirectUri,
+        code: request.code,
+        state: request.state,
+        codeVerifier: request.codeVerifier,
+      });
+      const claims: Record<string, unknown> = { ...result.idTokenClaims };
+      // MSAL normalizes the address onto the account even when the claim it
+      // came from is one this code would not have looked at.
+      claims["preferred_username"] ??= result.account?.username;
+      return claims;
+    },
+  };
+}
+/**
+ * Signs users in against Entra ID with MSAL.
  *
  * App Service Easy Auth cannot be used: it rejects any `Authorization` bearer
  * it cannot validate, including on excluded paths, which would break both the
  * OAuth tokens and the API keys the MCP endpoint accepts.
- *
- * The id token is read without verifying its signature because it is received
- * over TLS straight from the token endpoint in a confidential-client code
- * exchange, which OpenID Connect Core allows.
  */
 export function createEntraSessionProvider(
   config: EntraConfig,
-  exchange: TokenExchange = exchangeWithEntra,
-  assertion: AssertionSource = managedIdentityAssertion,
+  client: AuthClient = createMsalAuthClient(config),
 ): SessionProvider {
-  const startLogin = (message: IncomingMessage, response: ServerResponse, url: URL): void => {
-    const verifier = base64url(randomBytes(32));
-    const challenge = createHash("sha256").update(verifier).digest("base64url");
+  const crypto = new CryptoProvider();
+
+  const startLogin = async (
+    message: IncomingMessage,
+    response: ServerResponse,
+    url: URL,
+  ): Promise<void> => {
+    const { verifier, challenge } = await crypto.generatePkceCodes();
     const flow: FlowClaims = {
-      state: base64url(randomBytes(16)),
+      state: crypto.createNewGuid(),
       verifier,
       redirect: safeRedirect(url.searchParams.get("post_login_redirect_uri")),
       exp: Math.floor(Date.now() / 1000) + FLOW_TTL_SECONDS,
     };
 
-    const authorize = new URL(
-      `https://login.microsoftonline.com/${config.tenantId}/oauth2/v2.0/authorize`,
+    redirect(
+      response,
+      await client.authorizeUrl({
+        redirectUri: `${requestOrigin(message)}${CALLBACK_PATH}`,
+        state: flow.state,
+        codeChallenge: challenge,
+      }),
+      [cookie(FLOW_COOKIE, seal(config.sessionSecret, flow), FLOW_TTL_SECONDS)],
     );
-    authorize.search = new URLSearchParams({
-      client_id: config.clientId,
-      response_type: "code",
-      redirect_uri: `${requestOrigin(message)}${CALLBACK_PATH}`,
-      response_mode: "query",
-      scope: "openid profile email",
-      state: flow.state,
-      code_challenge: challenge,
-      code_challenge_method: "S256",
-    }).toString();
-
-    redirect(response, authorize.toString(), [
-      cookie(FLOW_COOKIE, seal(config.sessionSecret, flow), FLOW_TTL_SECONDS),
-    ]);
   };
 
   const completeLogin = async (
@@ -294,28 +325,50 @@ export function createEntraSessionProvider(
     const cookies = parseCookies(message.headers.cookie);
     const flow = unseal<FlowClaims>(config.sessionSecret, cookies[FLOW_COOKIE]);
     const now = Math.floor(Date.now() / 1000);
-    if (!flow || flow.exp < now || flow.state !== url.searchParams.get("state")) {
-      json(response, 400, { error: "The sign-in attempt could not be verified." });
+    // Each cause has a different remedy, so each says which one it is rather
+    // than collapsing into one unactionable message.
+    if (!flow) {
+      json(response, 400, {
+        error:
+          "No sign-in was in progress in this browser. Start again from the application, and allow cookies for this site.",
+      });
+      return;
+    }
+    if (flow.exp < now) {
+      json(response, 400, { error: "The sign-in took too long. Start again." });
+      return;
+    }
+    if (flow.state !== url.searchParams.get("state")) {
+      json(response, 400, { error: "The sign-in reply did not match this browser's request." });
       return;
     }
     const code = url.searchParams.get("code");
     if (!code) {
-      json(response, 400, { error: url.searchParams.get("error") ?? "Sign-in was cancelled." });
+      json(response, 400, {
+        error: url.searchParams.get("error_description") ??
+          url.searchParams.get("error") ??
+          "Sign-in was cancelled.",
+      });
       return;
     }
 
-    const tokens = await exchange(
-      config,
-      new URLSearchParams({
-        client_id: config.clientId,
-        ...(await clientCredential(config, assertion)),
-        grant_type: "authorization_code",
+    let claims: Record<string, unknown>;
+    try {
+      claims = await client.redeemCode({
+        redirectUri: `${requestOrigin(message)}${CALLBACK_PATH}`,
         code,
-        redirect_uri: `${requestOrigin(message)}${CALLBACK_PATH}`,
-        code_verifier: flow.verifier,
-      }),
-    );
-    const email = tokens.id_token ? emailFromIdToken(tokens.id_token) : null;
+        state: flow.state,
+        codeVerifier: flow.verifier,
+      });
+    } catch (error) {
+      // Entra ID's own description names the defect — a redirect URI under
+      // the wrong platform, an expired secret, a rejected assertion — and it
+      // is unreachable if this is left to the generic 500 handler.
+      json(response, 502, { error: `Entra ID rejected the sign-in: ${String(error)}` });
+      return;
+    }
+
+    const email = emailFromClaims(claims);
     if (!email) {
       json(response, 502, { error: "Entra ID did not return an email address." });
       return;
@@ -327,7 +380,6 @@ export function createEntraSessionProvider(
       cookie(FLOW_COOKIE, "", 0),
     ]);
   };
-
   const resolve = (message: IncomingMessage): string | null => {
     const cookies = parseCookies(message.headers.cookie);
     const session = unseal<SessionClaims>(config.sessionSecret, cookies[SESSION_COOKIE]);
@@ -342,7 +394,7 @@ export function createEntraSessionProvider(
     handle: async (message, response, pathname) => {
       const url = new URL(message.url ?? "/", requestOrigin(message));
       if (pathname === "/.auth/login/aad") {
-        startLogin(message, response, url);
+        await startLogin(message, response, url);
         return true;
       }
       if (pathname === CALLBACK_PATH) {

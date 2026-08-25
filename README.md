@@ -290,6 +290,17 @@ exposed API, no app roles, no Graph permissions.
 Authenticating is not the same as being allowed in. Anyone in the chosen
 audience can complete sign-in; `AUTHORIZED_USERS` decides who the application
 then serves, and it is checked on every request rather than only at sign-in.
+
+The protocol itself is Microsoft's own [MSAL for
+Node](https://www.npmjs.com/package/@azure/msal-node): it builds the authorize
+URL, redeems the code and validates the identity token. The application adds
+only what MSAL cannot, which is correlating the two legs of the flow across a
+stateless process — a signed `ncli_flow` cookie carrying the `state`, the PKCE
+verifier and the page to return to. That cookie lives for 30 minutes, so
+consent, multi-factor prompts and a password change in the middle of a sign-in
+all still land back on a valid flow. Losing it is the one recoverable failure:
+the callback then says so plainly and asks for a fresh attempt from the
+application root.
 ### If you created the site by hand
 
 The Bicep template configures everything below. A site created in the portal

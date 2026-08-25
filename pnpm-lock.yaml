@@ -39,6 +39,9 @@ importers:
 
   apps/server:
     dependencies:
+      '@azure/msal-node':
+        specifier: ^5.5.0
+        version: 5.5.0
       '@notification-cli/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -118,6 +121,14 @@ packages:
   '@azure/logger@1.4.0':
     resolution: {integrity: sha1-PVpif+WaJ27OdIenndkq1cUIwzk=, tarball: https://ms-feed-17.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/logger/-/logger-1.4.0.tgz}
     engines: {node: '>=22.0.0'}
+
+  '@azure/msal-common@16.12.0':
+    resolution: {integrity: sha1-XL1Y25GUj5I4LoxijzSlf0adOnQ=, tarball: https://ms-feed-17.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/msal-common/-/msal-common-16.12.0.tgz}
+    engines: {node: '>=0.8.0'}
+
+  '@azure/msal-node@5.5.0':
+    resolution: {integrity: sha1-1JivIxqllWZkKJve00fAVrX357M=, tarball: https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/msal-node/-/msal-node-5.5.0.tgz}
+    engines: {node: '>=20'}
 
   '@azure/web-pubsub@1.2.0':
     resolution: {integrity: sha1-luGmHjt+ukmgNkAaYkbqHQ1MVDc=, tarball: https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/web-pubsub/-/web-pubsub-1.2.0.tgz}
@@ -915,6 +926,13 @@ snapshots:
       tslib: 2.8.1
     transitivePeerDependencies:
       - supports-color
+
+  '@azure/msal-common@16.12.0': {}
+
+  '@azure/msal-node@5.5.0':
+    dependencies:
+      '@azure/msal-common': 16.12.0
+      jsonwebtoken: 9.0.3
 
   '@azure/web-pubsub@1.2.0':
     dependencies:

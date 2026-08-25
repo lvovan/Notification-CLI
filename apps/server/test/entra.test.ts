@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
+import type { ClientAssertionCallback } from "@azure/msal-node";
 import type { AddressInfo } from "node:net";
 import { ConfigurationError } from "@notification-cli/core/configuration";
 import {
   clientCredential,
   createEntraSessionProvider,
+  createMsalAuthClient,
   parseCookies,
   readEntraConfig,
+  type AuthClient,
   type EntraConfig,
-  type TokenExchange,
 } from "../src/entra.js";
 import { lazySessionProvider } from "../src/session.js";
 import { createNotificationServer } from "../src/server.js";
@@ -23,20 +25,35 @@ const CONFIG: EntraConfig = {
   sessionSecret: "a-secret-long-enough-to-sign-with",
 };
 
-function idToken(claims: Record<string, unknown>): string {
-  return `header.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.signature`;
+const PUBLIC_CONFIG: EntraConfig = {
+  tenantId: CONFIG.tenantId,
+  clientId: CONFIG.clientId,
+  sessionSecret: CONFIG.sessionSecret,
+};
+
+/** Stands in for MSAL, recording what it was asked so tests can assert on it. */
+function fakeClient(redeem?: AuthClient["redeemCode"]): AuthClient & {
+  authorize?: Parameters<AuthClient["authorizeUrl"]>[0];
+} {
+  const client: AuthClient & { authorize?: Parameters<AuthClient["authorizeUrl"]>[0] } = {
+    authorizeUrl: (request) => {
+      client.authorize = request;
+      const url = new URL("https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize");
+      url.search = new URLSearchParams({ state: request.state }).toString();
+      return Promise.resolve(url.toString());
+    },
+    redeemCode: redeem ?? (() => Promise.resolve({ preferred_username: OWNER.toUpperCase() })),
+  };
+  return client;
 }
 
-const exchangeOk: TokenExchange = () =>
-  Promise.resolve({ id_token: idToken({ preferred_username: OWNER.toUpperCase() }) });
-
 async function withServer(
-  exchange: TokenExchange,
+  client: AuthClient,
   visit: (origin: string) => Promise<void>,
 ): Promise<void> {
   const server = createNotificationServer({
     webRoot: process.cwd(),
-    session: createEntraSessionProvider(CONFIG, exchange),
+    session: createEntraSessionProvider(CONFIG, client),
     logger: { error: () => {} },
   });
   await new Promise<void>((listening) => server.listen(0, "127.0.0.1", listening));
@@ -49,7 +66,7 @@ async function withServer(
 }
 
 /** Drives a full sign-in and returns the session cookie it produced. */
-async function signIn(origin: string, exchangeState?: (state: string) => string): Promise<string> {
+async function signIn(origin: string, forgeState?: (state: string) => string): Promise<string> {
   const start = await fetch(`${origin}/.auth/login/aad?post_login_redirect_uri=/history`, {
     redirect: "manual",
   });
@@ -59,7 +76,7 @@ async function signIn(origin: string, exchangeState?: (state: string) => string)
 
   const callback = await fetch(
     `${origin}/.auth/login/aad/callback?code=abc&state=${encodeURIComponent(
-      exchangeState ? exchangeState(state) : state,
+      forgeState ? forgeState(state) : state,
     )}`,
     { redirect: "manual", headers: { cookie: flowCookie } },
   );
@@ -76,8 +93,7 @@ test("the configuration must be complete", () => {
   assert.throws(() => readEntraConfig({}), /NOTIFICATION_CLI_ENTRA_TENANT_ID is not configured/);
 });
 
-// A tenant policy can forbid client secrets outright, so the secret is optional
-// and a federated managed-identity assertion stands in for it.
+// A tenant policy can forbid client secrets outright, so the secret is optional.
 test("the client secret is optional", () => {
   const env = {
     NOTIFICATION_CLI_ENTRA_TENANT_ID: "tenant",
@@ -85,29 +101,31 @@ test("the client secret is optional", () => {
     NOTIFICATION_CLI_SESSION_SECRET: "secret",
   };
   assert.equal(readEntraConfig(env).clientSecret, undefined);
-  assert.equal(readEntraConfig({ ...env, NOTIFICATION_CLI_ENTRA_CLIENT_SECRET: " " }).clientSecret, undefined);
+  assert.equal(
+    readEntraConfig({ ...env, NOTIFICATION_CLI_ENTRA_CLIENT_SECRET: " " }).clientSecret,
+    undefined,
+  );
 });
 
-test("a configured secret authenticates the client, and otherwise an assertion does", async () => {
-  assert.deepEqual(await clientCredential(CONFIG, () => Promise.reject(new Error("unused"))), {
-    client_secret: "secret",
+test("a secret is preferred, then a managed identity, then nothing at all", async () => {
+  const identity = { IDENTITY_ENDPOINT: "http://identity", IDENTITY_HEADER: "header" };
+
+  assert.deepEqual(clientCredential(CONFIG, () => Promise.reject(new Error("unused")), identity), {
+    clientSecret: "secret",
   });
 
-  const { clientSecret: _omitted, ...federated } = CONFIG;
-  assert.deepEqual(await clientCredential(federated, () => Promise.resolve("assertion")), {
-    client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
-    client_assertion: "assertion",
-  });
+  const federated = clientCredential(PUBLIC_CONFIG, () => Promise.resolve("assertion"), identity);
+  const assertionCallback = federated.clientAssertion as ClientAssertionCallback;
+  assert.equal(typeof assertionCallback, "function");
+  assert.equal(await assertionCallback({ clientId: "client" }), "assertion");
+
+  // PKCE alone binds the code to this server, so a public client sends nothing.
+  assert.deepEqual(clientCredential(PUBLIC_CONFIG, () => Promise.resolve("unused"), {}), {});
 });
 
-// PKCE already binds the code to this server, so a public-client registration
-// needs no credential at all — the arrangement that needs no Azure-side setup.
-test("no credential is sent when there is none to send", async () => {
-  const { clientSecret: _omitted, ...federated } = CONFIG;
-  assert.deepEqual(await clientCredential(federated, () => Promise.resolve(null)), {});
-
-  delete process.env.IDENTITY_ENDPOINT;
-  assert.deepEqual(await clientCredential(federated), {});
+test("MSAL accepts every credential arrangement", () => {
+  assert.ok(createMsalAuthClient(CONFIG));
+  assert.ok(createMsalAuthClient(PUBLIC_CONFIG));
 });
 
 // An unconfigured site has to boot: App Service replaces a process that exits
@@ -138,22 +156,19 @@ test("a missing sign-in setting is reported per request, not at startup", async 
 });
 
 test("sign-in starts a PKCE code flow bound to a sealed cookie", async () => {
-  await withServer(exchangeOk, async (origin) => {
+  const client = fakeClient();
+  await withServer(client, async (origin) => {
     const response = await fetch(`${origin}/.auth/login/aad?post_login_redirect_uri=/history`, {
       redirect: "manual",
     });
     assert.equal(response.status, 302);
+    assert.equal(new URL(response.headers.get("location") ?? "").origin, "https://login.microsoftonline.com");
 
-    const authorize = new URL(response.headers.get("location") ?? "");
-    assert.equal(authorize.origin, "https://login.microsoftonline.com");
-    assert.equal(authorize.pathname, "/tenant/oauth2/v2.0/authorize");
-    assert.equal(authorize.searchParams.get("client_id"), "client");
-    assert.equal(authorize.searchParams.get("response_type"), "code");
-    assert.equal(authorize.searchParams.get("code_challenge_method"), "S256");
-    assert.ok(authorize.searchParams.get("code_challenge"));
+    assert.ok(client.authorize?.state);
+    assert.ok(client.authorize?.codeChallenge);
     assert.match(
-      authorize.searchParams.get("redirect_uri") ?? "",
-      /^https:\/\/127\.0\.0\.1:\d+\/\.auth\/login\/aad\/callback$/,
+      client.authorize?.redirectUri ?? "",
+      /^https?:\/\/127\.0\.0\.1:\d+\/\.auth\/login\/aad\/callback$/,
     );
 
     const [flow] = response.headers.getSetCookie();
@@ -164,37 +179,25 @@ test("sign-in starts a PKCE code flow bound to a sealed cookie", async () => {
 });
 
 test("the code challenge is the S256 hash of the verifier that is later presented", async () => {
-  let presented: URLSearchParams | undefined;
-  await withServer(
-    (_config, body) => {
-      presented = body;
-      return Promise.resolve({ id_token: idToken({ email: OWNER }) });
-    },
-    async (origin) => {
-      const start = await fetch(`${origin}/.auth/login/aad`, { redirect: "manual" });
-      const challenge = new URL(start.headers.get("location") ?? "").searchParams.get(
-        "code_challenge",
-      );
-      const flowCookie = (start.headers.getSetCookie()[0] ?? "").split(";")[0] ?? "";
-      const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? "";
+  let presented: string | undefined;
+  const client = fakeClient((request) => {
+    presented = request.codeVerifier;
+    return Promise.resolve({ email: OWNER });
+  });
 
-      await fetch(`${origin}/.auth/login/aad/callback?code=abc&state=${state}`, {
-        redirect: "manual",
-        headers: { cookie: flowCookie },
-      });
-
-      const verifier = presented?.get("code_verifier") ?? "";
-      assert.equal(createHash("sha256").update(verifier).digest("base64url"), challenge);
-      assert.equal(presented?.get("grant_type"), "authorization_code");
-      assert.equal(presented?.get("client_secret"), "secret");
-    },
-  );
+  await withServer(client, async (origin) => {
+    await signIn(origin);
+    assert.equal(
+      createHash("sha256").update(presented ?? "").digest("base64url"),
+      client.authorize?.codeChallenge,
+    );
+  });
 });
 
 test("a completed sign-in authenticates later requests", async () => {
   process.env.AUTHORIZED_USERS = OWNER;
   try {
-    await withServer(exchangeOk, async (origin) => {
+    await withServer(fakeClient(), async (origin) => {
       const session = await signIn(origin);
       assert.ok(session.startsWith("ncli_session="));
 
@@ -212,23 +215,42 @@ test("a completed sign-in authenticates later requests", async () => {
   }
 });
 
+// Each refusal names its own cause: "start again" and "allow cookies" are
+// different instructions, and one message for both helps nobody.
 test("a mismatched state is refused", async () => {
-  await withServer(exchangeOk, async (origin) => {
+  await withServer(fakeClient(), async (origin) => {
     assert.equal(await signIn(origin, () => "forged"), "400");
   });
 });
 
-test("a callback without the flow cookie is refused", async () => {
-  await withServer(exchangeOk, async (origin) => {
+test("a callback without the flow cookie says so", async () => {
+  await withServer(fakeClient(), async (origin) => {
     const response = await fetch(`${origin}/.auth/login/aad/callback?code=abc&state=x`, {
       redirect: "manual",
     });
     assert.equal(response.status, 400);
+    assert.match(String((await response.json()).error), /No sign-in was in progress/);
+  });
+});
+
+test("a rejected code exchange reports what Entra ID said", async () => {
+  const client = fakeClient(() => Promise.reject(new Error("AADSTS7000218: the request body")));
+  await withServer(client, async (origin) => {
+    const start = await fetch(`${origin}/.auth/login/aad`, { redirect: "manual" });
+    const flowCookie = (start.headers.getSetCookie()[0] ?? "").split(";")[0] ?? "";
+    const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? "";
+
+    const callback = await fetch(`${origin}/.auth/login/aad/callback?code=abc&state=${state}`, {
+      redirect: "manual",
+      headers: { cookie: flowCookie },
+    });
+    assert.equal(callback.status, 502);
+    assert.match(String((await callback.json()).error), /AADSTS7000218/);
   });
 });
 
 test("a tampered session cookie is not a session", async () => {
-  await withServer(exchangeOk, async (origin) => {
+  await withServer(fakeClient(), async (origin) => {
     const session = await signIn(origin);
     const [, value = ""] = session.split("=");
     const [payload = ""] = value.split(".");
@@ -244,7 +266,7 @@ test("a tampered session cookie is not a session", async () => {
 });
 
 test("an external post-login target is replaced by the application root", async () => {
-  await withServer(exchangeOk, async (origin) => {
+  await withServer(fakeClient(), async (origin) => {
     const start = await fetch(
       `${origin}/.auth/login/aad?post_login_redirect_uri=https://evil.example`,
       { redirect: "manual" },
@@ -260,13 +282,13 @@ test("an external post-login target is replaced by the application root", async 
 });
 
 test("a token response without an address fails the sign-in", async () => {
-  await withServer(() => Promise.resolve({}), async (origin) => {
+  await withServer(fakeClient(() => Promise.resolve({})), async (origin) => {
     assert.equal(await signIn(origin), "502");
   });
 });
 
 test("the session endpoints report and clear the principal", async () => {
-  await withServer(exchangeOk, async (origin) => {
+  await withServer(fakeClient(), async (origin) => {
     const session = await signIn(origin);
 
     const me = await fetch(`${origin}/.auth/me`, { headers: { cookie: session } });
