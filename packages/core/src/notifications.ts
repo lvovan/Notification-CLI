@@ -1,4 +1,4 @@
-import type { HttpRequest, HttpResponseInit } from "@azure/functions";
+import type { CoreRequest, CoreResponse } from "./http.js";
 import { authorizeBrowserRequest, browserAuthorizationError } from "./auth.js";
 import { ConfigurationError } from "./configuration.js";
 import { userKey } from "./identity.js";
@@ -16,13 +16,8 @@ import { STORAGE_CONNECTION_STRING_ENV } from "./table-storage.js";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
-function queryParameter(request: HttpRequest, name: string): string | null {
-  const { query, url } = request as HttpRequest & { query?: URLSearchParams };
-  const fromQuery = query?.get(name) ?? null;
-  if (fromQuery !== null) {
-    return fromQuery;
-  }
-  return url ? new URL(url).searchParams.get(name) : null;
+function queryParameter(request: CoreRequest, name: string): string | null {
+  return request.query.get(name);
 }
 
 function parseLimit(value: string | null): number {
@@ -43,7 +38,7 @@ function parseLimit(value: string | null): number {
   return limit;
 }
 
-function storageUnavailable(): HttpResponseInit {
+function storageUnavailable(): CoreResponse {
   return {
     status: 503,
     headers: NO_STORE,
@@ -54,11 +49,11 @@ function storageUnavailable(): HttpResponseInit {
 }
 
 export async function handleNotificationsRequest(
-  request: HttpRequest,
+  request: CoreRequest,
   env: NodeJS.ProcessEnv = process.env,
   store?: NotificationHistoryStore | null,
   now: () => Date = () => new Date(),
-): Promise<HttpResponseInit> {
+): Promise<CoreResponse> {
   const authorization = authorizeBrowserRequest(request, env);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);
@@ -129,10 +124,10 @@ export async function handleNotificationsRequest(
  * everything ever sent, not what is currently listed.
  */
 export async function handleClearNotificationsRequest(
-  request: HttpRequest,
+  request: CoreRequest,
   env: NodeJS.ProcessEnv = process.env,
   store?: NotificationHistoryStore | null,
-): Promise<HttpResponseInit> {
+): Promise<CoreResponse> {
   const authorization = authorizeBrowserRequest(request, env);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);

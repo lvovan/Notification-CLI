@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { HttpRequest } from "@azure/functions";
-import { fanOutNotification } from "../src/fanout.js";
-import { notificationOwner, userKey } from "../src/identity.js";
-import { handleMetricsRequest } from "../src/metrics.js";
+import { fanOutNotification } from "@notification-cli/core/fanout";
+import { notificationOwner, userKey } from "@notification-cli/core/identity";
+import { handleMetricsRequest } from "@notification-cli/core/metrics";
 import {
   countWindows,
   tryCreateNotificationMetricsStore,
   type NotificationCounts,
   type NotificationMetricsStore,
-} from "../src/metrics-storage.js";
+} from "@notification-cli/core/metrics-storage";
 
 const NOW = new Date("2026-08-23T12:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1000;

@@ -1,4 +1,4 @@
-import type { HttpRequest } from "@azure/functions";
+import type { CoreRequest, CoreHeaders } from "./http.js";
 import { AUTHORIZED_USERS_ENV, parseAuthorizedUsers } from "./auth.js";
 import { tryCreateApiKeyStore, type ApiKeyStore } from "./api-key-storage.js";
 import { ConfigurationError } from "./configuration.js";
@@ -25,7 +25,7 @@ const KEY_HEADERS = ["x-api-key", "x-authorization", "authorization"] as const;
 
 /** Extracts the key from whichever accepted header carries it. */
 export function presentedApiKey(
-  headers: Pick<HttpRequest["headers"], "get">,
+  headers: CoreHeaders,
 ): string | null {
   for (const name of KEY_HEADERS) {
     const value = headers.get(name)?.trim();
@@ -47,7 +47,7 @@ export function presentedApiKey(
  * revokes its key immediately without any separate key management step.
  */
 export async function resolveApiKeyOwner(
-  request: Pick<HttpRequest, "headers">,
+  request: Pick<CoreRequest, "headers">,
   env: NodeJS.ProcessEnv = process.env,
   store?: ApiKeyStore | null,
 ): Promise<ApiKeyResolution> {

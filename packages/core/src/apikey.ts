@@ -1,4 +1,4 @@
-import type { HttpRequest, HttpResponseInit } from "@azure/functions";
+import type { CoreRequest, CoreResponse } from "./http.js";
 import {
   authorizeBrowserRequest,
   browserAuthorizationError,
@@ -14,7 +14,7 @@ import { STORAGE_CONNECTION_STRING_ENV } from "./table-storage.js";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
-function keyResponse(record: ApiKeyRecord): HttpResponseInit {
+function keyResponse(record: ApiKeyRecord): CoreResponse {
   return {
     status: 200,
     headers: NO_STORE,
@@ -22,7 +22,7 @@ function keyResponse(record: ApiKeyRecord): HttpResponseInit {
   };
 }
 
-function storageUnavailable(): HttpResponseInit {
+function storageUnavailable(): CoreResponse {
   return {
     status: 503,
     headers: NO_STORE,
@@ -33,11 +33,11 @@ function storageUnavailable(): HttpResponseInit {
 }
 
 async function withKeyStore(
-  request: HttpRequest,
+  request: CoreRequest,
   env: NodeJS.ProcessEnv,
   store: ApiKeyStore | null | undefined,
   action: (keys: ApiKeyStore, email: string) => Promise<ApiKeyRecord>,
-): Promise<HttpResponseInit> {
+): Promise<CoreResponse> {
   const authorization = authorizeBrowserRequest(request, env);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);
@@ -60,17 +60,17 @@ async function withKeyStore(
 
 /** Mints the caller's key on first visit, then returns the same key. */
 export function handleApiKeyRequest(
-  request: HttpRequest,
+  request: CoreRequest,
   env: NodeJS.ProcessEnv = process.env,
   store?: ApiKeyStore | null,
-): Promise<HttpResponseInit> {
+): Promise<CoreResponse> {
   return withKeyStore(request, env, store, (keys, email) => keys.ensure(email));
 }
 
 export function handleApiKeyCycleRequest(
-  request: HttpRequest,
+  request: CoreRequest,
   env: NodeJS.ProcessEnv = process.env,
   store?: ApiKeyStore | null,
-): Promise<HttpResponseInit> {
+): Promise<CoreResponse> {
   return withKeyStore(request, env, store, (keys, email) => keys.cycle(email));
 }

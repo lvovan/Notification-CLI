@@ -9,13 +9,11 @@
     "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "@azure/data-tables": "^13.3.2",
     "@azure/functions": "^4.7.0",
-    "@azure/web-pubsub": "^1.2.0",
-    "web-push": "^3.6.7"
+    "@notification-cli/core": "workspace:*"
   },
   "devDependencies": {
-    "@types/web-push": "^3.6.4",
+    "@azure/data-tables": "^13.3.2",
     "tsx": "^4.19.0"
   }
 }

@@ -6,11 +6,11 @@ import {
   normalizeEmail,
   parseAuthorizedUsers,
   parseClientPrincipal,
-} from "../src/auth.js";
+} from "@notification-cli/core/auth";
 import {
   handleNegotiateRequest,
   handleSessionRequest,
-} from "../src/browser.js";
+} from "@notification-cli/core/browser";
 
 function requestFor(
   userDetails = " User@Example.COM ",

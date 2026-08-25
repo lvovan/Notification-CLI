@@ -1,8 +1,4 @@
-import type {
-  HttpRequest,
-  HttpResponseInit,
-  InvocationContext,
-} from "@azure/functions";
+import type { CoreRequest, CoreResponse, CoreLogger } from "./http.js";
 import { resolveApiKeyOwner } from "./api-key.js";
 import type { ApiKeyStore } from "./api-key-storage.js";
 import { ConfigurationError } from "./configuration.js";
@@ -48,7 +44,7 @@ const tool = {
 function jsonRpcResult(
   id: JsonRpcRequest["id"],
   result: unknown,
-): HttpResponseInit {
+): CoreResponse {
   return {
     status: 200,
     jsonBody: { jsonrpc: "2.0", id: id ?? null, result },
@@ -60,7 +56,7 @@ function jsonRpcError(
   code: number,
   message: string,
   status = 200,
-): HttpResponseInit {
+): CoreResponse {
   return {
     status,
     jsonBody: {
@@ -72,15 +68,15 @@ function jsonRpcError(
 }
 
 export async function handleMcpRequest(
-  request: HttpRequest,
+  request: CoreRequest,
   env: NodeJS.ProcessEnv = process.env,
   fanOut: (
     message: string,
     owner: NotificationOwner,
   ) => Promise<FanoutReport> = fanOutNotification,
-  context?: InvocationContext,
+  context?: CoreLogger,
   keys?: ApiKeyStore | null,
-): Promise<HttpResponseInit> {
+): Promise<CoreResponse> {
   let owner: NotificationOwner;
   try {
     const resolution = await resolveApiKeyOwner(request, env, keys);

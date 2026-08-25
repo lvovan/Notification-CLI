@@ -7,9 +7,9 @@ import {
   apiKeyHash,
   generateApiKey,
   maskApiKey,
-} from "../src/api-key-storage.js";
-import { presentedApiKey, resolveApiKeyOwner } from "../src/api-key.js";
-import { userKey } from "../src/identity.js";
+} from "@notification-cli/core/api-key-storage";
+import { presentedApiKey, resolveApiKeyOwner } from "@notification-cli/core/api-key";
+import { userKey } from "@notification-cli/core/identity";
 
 const OWNER = "user@example.com";
 const OTHER = "someone.else@example.com";

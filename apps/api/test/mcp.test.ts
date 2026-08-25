@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { HttpRequest } from "@azure/functions";
-import type { ApiKeyRecord, ApiKeyStore } from "../src/api-key-storage.js";
-import { resolveApiKeyOwner } from "../src/api-key.js";
-import { FanoutError, type FanoutReport } from "../src/fanout.js";
-import { userKey } from "../src/identity.js";
-import { handleMcpRequest } from "../src/mcp.js";
-import { handleNotifyRequest } from "../src/notify.js";
-import { handleWhoamiRequest } from "../src/whoami.js";
+import type { ApiKeyRecord, ApiKeyStore } from "@notification-cli/core/api-key-storage";
+import { resolveApiKeyOwner } from "@notification-cli/core/api-key";
+import { FanoutError, type FanoutReport } from "@notification-cli/core/fanout";
+import { userKey } from "@notification-cli/core/identity";
+import { handleMcpRequest } from "@notification-cli/core/mcp";
+import { handleNotifyRequest } from "@notification-cli/core/notify";
+import { handleWhoamiRequest } from "@notification-cli/core/whoami";
 
 const OWNER = "user@example.com";
 const OTHER = "someone.else@example.com";

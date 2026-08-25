@@ -2,21 +2,21 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
-import { AUTHORIZED_USERS_ENV } from "../src/auth.js";
-import { API_KEYS_TABLE } from "../src/api-key-storage.js";
+import { AUTHORIZED_USERS_ENV } from "@notification-cli/core/auth";
+import { API_KEYS_TABLE } from "@notification-cli/core/api-key-storage";
 import {
   VAPID_PRIVATE_KEY_ENV,
   VAPID_PUBLIC_KEY_ENV,
   VAPID_SUBJECT_ENV,
-} from "../src/fanout.js";
-import { NOTIFICATION_METRICS_TABLE } from "../src/metrics-storage.js";
+} from "@notification-cli/core/fanout";
+import { NOTIFICATION_METRICS_TABLE } from "@notification-cli/core/metrics-storage";
 import {
   NOTIFICATION_HISTORY_TABLE,
   RETENTION_DAYS_ENV,
-} from "../src/notification-storage.js";
-import { PUSH_SUBSCRIPTIONS_TABLE } from "../src/push-storage.js";
-import { STORAGE_CONNECTION_STRING_ENV } from "../src/table-storage.js";
-import { CONNECTION_STRING_ENV } from "../src/web-pubsub.js";
+} from "@notification-cli/core/notification-storage";
+import { PUSH_SUBSCRIPTIONS_TABLE } from "@notification-cli/core/push-storage";
+import { STORAGE_CONNECTION_STRING_ENV } from "@notification-cli/core/table-storage";
+import { CONNECTION_STRING_ENV } from "@notification-cli/core/web-pubsub";
 
 const templatePath = resolve("../../infra/main.bicep");
 const workflowPath = resolve("../../.github/workflows/infrastructure.yml");

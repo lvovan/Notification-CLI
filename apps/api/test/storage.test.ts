@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import type { TableClient } from "@azure/data-tables";
-import { userKey } from "../src/identity.js";
+import { userKey } from "@notification-cli/core/identity";
 import {
   AzureTableNotificationMetricsStore,
   type NotificationMetricsStore,
-} from "../src/metrics-storage.js";
+} from "@notification-cli/core/metrics-storage";
 import {
   AzureTableNotificationHistoryStore,
   NotificationCursorError,
@@ -14,12 +14,12 @@ import {
   parseNotificationCursor,
   type NotificationHistoryStore,
   type StoredNotification,
-} from "../src/notification-storage.js";
+} from "@notification-cli/core/notification-storage";
 import {
   AzureTablePushSubscriptionStore,
   type PushSubscriptionData,
   type PushSubscriptionStore,
-} from "../src/push-storage.js";
+} from "@notification-cli/core/push-storage";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NOW = new Date("2026-08-24T12:00:00.000Z");

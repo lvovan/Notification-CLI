@@ -2,24 +2,24 @@ import { app } from "@azure/functions";
 import {
   handleApiKeyCycleRequest,
   handleApiKeyRequest,
-} from "./apikey.js";
+} from "@notification-cli/core/apikey";
 import {
   handleNegotiateRequest,
   handleSessionRequest,
-} from "./browser.js";
-import { handleMcpRequest } from "./mcp.js";
-import { handleMetricsRequest } from "./metrics.js";
-import { handleNotifyRequest } from "./notify.js";
+} from "@notification-cli/core/browser";
+import { handleMcpRequest } from "@notification-cli/core/mcp";
+import { handleMetricsRequest } from "@notification-cli/core/metrics";
+import { handleNotifyRequest } from "@notification-cli/core/notify";
 import {
   handleClearNotificationsRequest,
   handleNotificationsRequest,
-} from "./notifications.js";
+} from "@notification-cli/core/notifications";
 import {
   handleDeletePushSubscription,
   handlePushConfigRequest,
   handleSavePushSubscription,
-} from "./push.js";
-import { handleWhoamiRequest } from "./whoami.js";
+} from "@notification-cli/core/push";
+import { handleWhoamiRequest } from "@notification-cli/core/whoami";
 
 app.http("negotiate", {
   methods: ["GET"],

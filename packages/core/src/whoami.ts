@@ -1,14 +1,14 @@
-import type { HttpRequest, HttpResponseInit } from "@azure/functions";
+import type { CoreRequest, CoreResponse } from "./http.js";
 import { resolveApiKeyOwner } from "./api-key.js";
 import type { ApiKeyStore } from "./api-key-storage.js";
 import { ConfigurationError } from "./configuration.js";
 
 /** Lets the CLI verify a key, and name the account, before saving it. */
 export async function handleWhoamiRequest(
-  request: HttpRequest,
+  request: CoreRequest,
   env: NodeJS.ProcessEnv = process.env,
   keys?: ApiKeyStore | null,
-): Promise<HttpResponseInit> {
+): Promise<CoreResponse> {
   const headers = { "Cache-Control": "no-store" };
   try {
     const resolution = await resolveApiKeyOwner(request, env, keys);

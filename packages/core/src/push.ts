@@ -1,4 +1,4 @@
-import type { HttpRequest, HttpResponseInit } from "@azure/functions";
+import type { CoreRequest, CoreResponse } from "./http.js";
 import {
   authorizeBrowserRequest,
   browserAuthorizationError,
@@ -13,14 +13,14 @@ import {
   type PushSubscriptionStore,
 } from "./push-storage.js";
 
-function noStore(response: HttpResponseInit): HttpResponseInit {
+function noStore(response: CoreResponse): CoreResponse {
   return {
     ...response,
     headers: { ...response.headers, "Cache-Control": "no-store" },
   };
 }
 
-function configurationUnavailable(error: unknown): HttpResponseInit {
+function configurationUnavailable(error: unknown): CoreResponse {
   if (error instanceof ConfigurationError) {
     return noStore({ status: 503, jsonBody: { error: error.message } });
   }
@@ -28,9 +28,9 @@ function configurationUnavailable(error: unknown): HttpResponseInit {
 }
 
 export function handlePushConfigRequest(
-  request: HttpRequest,
+  request: CoreRequest,
   env: NodeJS.ProcessEnv = process.env,
-): HttpResponseInit {
+): CoreResponse {
   const authorization = authorizeBrowserRequest(request, env);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);
@@ -48,10 +48,10 @@ export function handlePushConfigRequest(
 }
 
 export async function handleSavePushSubscription(
-  request: HttpRequest,
+  request: CoreRequest,
   env: NodeJS.ProcessEnv = process.env,
   store?: PushSubscriptionStore,
-): Promise<HttpResponseInit> {
+): Promise<CoreResponse> {
   const authorization = authorizeBrowserRequest(request, env);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);
@@ -83,10 +83,10 @@ export async function handleSavePushSubscription(
 }
 
 export async function handleDeletePushSubscription(
-  request: HttpRequest,
+  request: CoreRequest,
   env: NodeJS.ProcessEnv = process.env,
   store?: PushSubscriptionStore,
-): Promise<HttpResponseInit> {
+): Promise<CoreResponse> {
   const authorization = authorizeBrowserRequest(request, env);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);

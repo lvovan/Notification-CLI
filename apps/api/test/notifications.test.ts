@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { HttpRequest } from "@azure/functions";
-import { ConfigurationError } from "../src/configuration.js";
-import { fanOutNotification } from "../src/fanout.js";
-import { notificationOwner, userGroup, userKey } from "../src/identity.js";
-import { handleMetricsRequest } from "../src/metrics.js";
+import type { CoreResponse } from "@notification-cli/core/http";
+import { ConfigurationError } from "@notification-cli/core/configuration";
+import { fanOutNotification } from "@notification-cli/core/fanout";
+import { notificationOwner, userGroup, userKey } from "@notification-cli/core/identity";
+import { handleMetricsRequest } from "@notification-cli/core/metrics";
 import {
   DEFAULT_RETENTION_DAYS,
   DEFAULT_NOTIFICATION_PAGE_LIMIT,
@@ -14,15 +15,27 @@ import {
   type NotificationPage,
   type StoredNotification,
   notificationCursor,
-} from "../src/notification-storage.js";
+} from "@notification-cli/core/notification-storage";
 import {
   handleClearNotificationsRequest,
   handleNotificationsRequest,
-} from "../src/notifications.js";
+} from "@notification-cli/core/notifications";
 
 const NOW = new Date("2026-03-15T12:00:00.000Z");
 const OWNER = "user@example.com";
 const OTHER = "someone.else@example.com";
+
+interface NotificationsBody {
+  retentionDays: number;
+  notifications: StoredNotification[];
+  nextCursor: string | null;
+  error: string;
+}
+
+/** The responses are typed as unknown, so the assertions name their shape. */
+function body(response: CoreResponse): NotificationsBody {
+  return response.jsonBody as NotificationsBody;
+}
 
 function principalHeader(email = OWNER): string {
   return Buffer.from(
@@ -275,11 +288,11 @@ test("the notifications endpoint never returns another account's history", async
   );
 
   assert.deepEqual(
-    mine.jsonBody.notifications.map((entry: StoredNotification) => entry.id),
+    body(mine).notifications.map((entry: StoredNotification) => entry.id),
     ["mine"],
   );
   assert.deepEqual(
-    theirs.jsonBody.notifications.map((entry: StoredNotification) => entry.id),
+    body(theirs).notifications.map((entry: StoredNotification) => entry.id),
     ["theirs"],
   );
 });
@@ -301,7 +314,7 @@ test("the endpoint ignores any account identifier supplied by the caller", async
       () => NOW,
     );
     assert.equal(response.status, 200, url);
-    assert.deepEqual(response.jsonBody.notifications, [], url);
+    assert.deepEqual(body(response).notifications, [], url);
   }
 });
 
@@ -322,14 +335,11 @@ test("the notifications endpoint defaults to a five item page", async () => {
   );
 
   assert.equal(response.status, 200);
-  assert.equal(
-    response.jsonBody.notifications.length,
-    DEFAULT_NOTIFICATION_PAGE_LIMIT,
-  );
-  assert.equal(
-    response.jsonBody.nextCursor,
-    notificationCursor(response.jsonBody.notifications[4]),
-  );
+  const page = body(response).notifications;
+  assert.equal(page.length, DEFAULT_NOTIFICATION_PAGE_LIMIT);
+  const last = page.at(-1);
+  assert.ok(last);
+  assert.equal(body(response).nextCursor, notificationCursor(last));
 });
 
 test("a notification cursor returns strictly older pages without gaps", async () => {
@@ -358,8 +368,8 @@ test("a notification cursor returns strictly older pages without gaps", async ()
       () => NOW,
     );
     assert.equal(response.status, 200);
-    pages.push(response.jsonBody.notifications);
-    cursor = response.jsonBody.nextCursor;
+    pages.push(body(response).notifications);
+    cursor = body(response).nextCursor;
   }
 
   assert.deepEqual(pages.flat(), expected);
@@ -382,7 +392,7 @@ test("limit and before query validation returns bad request errors", async () =>
       () => NOW,
     );
     assert.equal(response.status, 400, url);
-    assert.match(response.jsonBody.error, /limit|before/);
+    assert.match(body(response).error, /limit|before/);
   }
 });
 
@@ -407,11 +417,11 @@ test("same-millisecond notifications page across the id tiebreak", async () => {
       () => NOW,
     );
     seen.push(
-      ...response.jsonBody.notifications.map(
+      ...body(response).notifications.map(
         (entry: StoredNotification) => entry.id,
       ),
     );
-    cursor = response.jsonBody.nextCursor;
+    cursor = body(response).nextCursor;
   }
 
   assert.deepEqual(seen, ["c", "b", "a"]);
@@ -484,5 +494,5 @@ test("clearing reports storage that is not configured", async () => {
   );
 
   assert.equal(response.status, 503);
-  assert.match(response.jsonBody.error, /NOTIFICATION_CLI_STORAGE/);
+  assert.match(body(response).error, /NOTIFICATION_CLI_STORAGE/);
 });

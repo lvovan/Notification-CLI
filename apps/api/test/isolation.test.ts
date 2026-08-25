@@ -3,18 +3,18 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 import type { HttpRequest } from "@azure/functions";
-import { handleNegotiateRequest } from "../src/browser.js";
-import { fanOutNotification } from "../src/fanout.js";
-import { notificationOwner, userGroup, userKey } from "../src/identity.js";
-import type { StoredPushSubscription } from "../src/push-storage.js";
-import { CLIENT_TOKEN_MINUTES } from "../src/web-pubsub.js";
+import { handleNegotiateRequest } from "@notification-cli/core/browser";
+import { fanOutNotification } from "@notification-cli/core/fanout";
+import { notificationOwner, userGroup, userKey } from "@notification-cli/core/identity";
+import type { StoredPushSubscription } from "@notification-cli/core/push-storage";
+import { CLIENT_TOKEN_MINUTES } from "@notification-cli/core/web-pubsub";
 
 const OWNER = "user@example.com";
 const OTHER = "someone.else@example.com";
 const env = { AUTHORIZED_USERS: `${OWNER};${OTHER}` };
 
 function source(name: string): string {
-  return readFileSync(resolve(`src/${name}`), "utf8");
+  return readFileSync(resolve(`../../packages/core/src/${name}`), "utf8");
 }
 
 function signedIn(email: string): HttpRequest {

@@ -1,4 +1,4 @@
-import type { HttpRequest, HttpResponseInit } from "@azure/functions";
+import type { CoreRequest, CoreResponse } from "./http.js";
 import {
   authorizeBrowserRequest,
   browserAuthorizationError,
@@ -11,11 +11,11 @@ import {
 } from "./metrics-storage.js";
 
 export async function handleMetricsRequest(
-  request: HttpRequest,
+  request: CoreRequest,
   env: NodeJS.ProcessEnv = process.env,
   store?: NotificationMetricsStore | null,
   now: () => Date = () => new Date(),
-): Promise<HttpResponseInit> {
+): Promise<CoreResponse> {
   const authorization = authorizeBrowserRequest(request, env);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);

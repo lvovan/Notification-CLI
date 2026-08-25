@@ -1,4 +1,4 @@
-import type { HttpRequest, HttpResponseInit } from "@azure/functions";
+import type { CoreRequest, CoreResponse } from "./http.js";
 import {
   authorizeBrowserRequest,
   browserAuthorizationError,
@@ -10,10 +10,10 @@ import {
 } from "./web-pubsub.js";
 
 export async function handleNegotiateRequest(
-  request: HttpRequest,
+  request: CoreRequest,
   env: NodeJS.ProcessEnv = process.env,
   createClient: () => NotificationNegotiator = createWebPubSubClient,
-): Promise<HttpResponseInit> {
+): Promise<CoreResponse> {
   const authorization = authorizeBrowserRequest(request, env);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);
@@ -31,9 +31,9 @@ export async function handleNegotiateRequest(
 }
 
 export function handleSessionRequest(
-  request: HttpRequest,
+  request: CoreRequest,
   env: NodeJS.ProcessEnv = process.env,
-): HttpResponseInit {
+): CoreResponse {
   const authorization = authorizeBrowserRequest(request, env);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);

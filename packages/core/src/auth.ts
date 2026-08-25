@@ -1,4 +1,4 @@
-import type { HttpRequest, HttpResponseInit } from "@azure/functions";
+import type { CoreRequest, CoreResponse } from "./http.js";
 
 export const AUTHORIZED_USERS_ENV = "AUTHORIZED_USERS";
 export const CLIENT_PRINCIPAL_HEADER = "x-ms-client-principal";
@@ -91,7 +91,7 @@ function principalEmail(principal: ClientPrincipal): string {
 }
 
 export function authorizeBrowserRequest(
-  request: Pick<HttpRequest, "headers">,
+  request: Pick<CoreRequest, "headers">,
   env: NodeJS.ProcessEnv = process.env,
 ): BrowserAuthorization {
   const principal = parseClientPrincipal(
@@ -149,7 +149,7 @@ export function authorizeBrowserRequest(
 
 export function browserAuthorizationError(
   authorization: Exclude<BrowserAuthorization, { authorized: true }>,
-): HttpResponseInit {
+): CoreResponse {
   return {
     status: authorization.status,
     headers: { "Cache-Control": "no-store" },

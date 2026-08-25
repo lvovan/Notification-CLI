@@ -1,27 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { HttpRequest } from "@azure/functions";
-import type { ApiKeyStore } from "../src/api-key-storage.js";
-import { ConfigurationError } from "../src/configuration.js";
+import type { ApiKeyStore } from "@notification-cli/core/api-key-storage";
+import { ConfigurationError } from "@notification-cli/core/configuration";
 import {
   FanoutError,
   fanOutNotification,
   validateNotificationMessage,
   type WebPushSender,
-} from "../src/fanout.js";
-import { notificationOwner } from "../src/identity.js";
-import { handleNotifyRequest } from "../src/notify.js";
+} from "@notification-cli/core/fanout";
+import { notificationOwner } from "@notification-cli/core/identity";
+import { handleNotifyRequest } from "@notification-cli/core/notify";
 import {
   handleDeletePushSubscription,
   handlePushConfigRequest,
   handleSavePushSubscription,
-} from "../src/push.js";
+} from "@notification-cli/core/push";
 import {
   parsePushSubscription,
   type PushSubscriptionData,
   type PushSubscriptionStore,
   type StoredPushSubscription,
-} from "../src/push-storage.js";
+} from "@notification-cli/core/push-storage";
 
 const OWNER = "user@example.com";
 const CLI_KEY = "ncli_cli-test-key";
