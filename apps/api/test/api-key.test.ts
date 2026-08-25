@@ -15,6 +15,7 @@ const OWNER = "user@example.com";
 const OTHER = "someone.else@example.com";
 const env = { AUTHORIZED_USERS: `${OWNER};${OTHER}` };
 const NOW = new Date("2026-03-15T12:00:00.000Z");
+const SCHEME = "Bearer";
 
 type Entity = Record<string, unknown> & {
   partitionKey: string;
@@ -261,19 +262,26 @@ test("the owner row is keyed by the normalized address", async () => {
   assert.equal(again.apiKey, minted.apiKey);
 });
 
-test("the key is read from either accepted header", () => {
+test("the key is read from any accepted header", () => {
   const cases: Array<[Record<string, string>, string | null]> = [
     [{ "x-api-key": "ncli_direct" }, "ncli_direct"],
-    [{ authorization: "Bearer ncli_bearer" }, "ncli_bearer"],
+    [{ authorization: "Bearer ncli_token" }, "ncli_token"],
+    [{ "x-authorization": "Bearer ncli_token" }, "ncli_token"],
     // Clients are inconsistent about the scheme's casing and spacing.
-    [{ authorization: "bearer   ncli_bearer  " }, "ncli_bearer"],
+    [{ authorization: "bearer   ncli_token  " }, "ncli_token"],
+    // Static Web Apps overwrites Authorization with its own platform token, so
+    // x-authorization has to win over whatever is left in it.
+    [
+      { "x-authorization": "Bearer ncli_token", authorization: "Bearer ey.plat.form" },
+      "ncli_token",
+    ],
     // The dedicated header wins so a client can carry an unrelated token.
     [
-      { "x-api-key": "ncli_direct", authorization: "Bearer ncli_bearer" },
+      { "x-api-key": "ncli_direct", authorization: "Bearer ncli_token" },
       "ncli_direct",
     ],
     [{}, null],
-    [{ authorization: "Basic ncli_bearer" }, null],
+    [{ authorization: "Basic ncli_token" }, null],
     [{ authorization: "Bearer" }, null],
     [{ authorization: "Bearer   " }, null],
     [{ "x-api-key": "   " }, null],
@@ -287,29 +295,27 @@ test("the key is read from either accepted header", () => {
     );
   }
 });
-
 test("a bearer token authorizes exactly like the dedicated header", async () => {
   const table = new FakeTable();
   const keys = store(table);
   const minted = await keys.ensure(OWNER);
 
-  const resolution = await resolveApiKeyOwner(
-    { headers: new Headers({ authorization: `Bearer ${minted.apiKey}` }) },
-    env,
-    keys,
-  );
-  assert.equal(resolution.authorized, true);
-  assert.equal(
-    resolution.authorized && resolution.owner.email,
-    OWNER,
-  );
-
-  assert.deepEqual(
-    await resolveApiKeyOwner(
-      { headers: new Headers({ authorization: "Bearer ncli_wrong" }) },
+  for (const name of ["authorization", "x-authorization"]) {
+    const resolution = await resolveApiKeyOwner(
+      { headers: new Headers({ [name]: `${SCHEME} ${minted.apiKey}` }) },
       env,
       keys,
-    ),
-    { authorized: false },
-  );
+    );
+    assert.equal(resolution.authorized && resolution.owner.email, OWNER, name);
+
+    assert.deepEqual(
+      await resolveApiKeyOwner(
+        { headers: new Headers({ [name]: "Bearer ncli_wrong" }) },
+        env,
+        keys,
+      ),
+      { authorized: false },
+      name,
+    );
+  }
 });

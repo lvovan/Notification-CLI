@@ -93,6 +93,7 @@ test("unknown and missing keys are rejected", async () => {
     { "x-api-key": "ncli_not-a-key" },
     {},
     { authorization: "Bearer ncli_not-a-key" },
+    { "x-authorization": "Bearer ncli_not-a-key" },
     { authorization: `Basic ${OWNER_KEY}` },
   ]) {
     assert.deepEqual(
@@ -102,22 +103,42 @@ test("unknown and missing keys are rejected", async () => {
   }
 });
 
-// MCP clients default to sending the key as a bearer token, so accepting it
-// there saves every one of them a custom-header setting.
-test("a bearer token is accepted wherever the dedicated header is", async () => {
+// MCP clients default to sending the key as a token rather than in a custom
+// header. Static Web Apps overwrites Authorization with its own platform token,
+// so x-authorization is the one that survives to the function; both are
+// accepted because the API is only behind that proxy in this deployment.
+test("a token is accepted from either scheme header", async () => {
   const store = keyStore();
-
-  const resolution = await resolveApiKeyOwner(
-    withHeaders({ authorization: `Bearer ${OWNER_KEY}` }),
-    env,
-    store,
-  );
-  assert.deepEqual(resolution, {
+  const expected = {
     authorized: true,
     owner: { email: OWNER, userKey: userKey(OWNER) },
-  });
-});
+  };
 
+  for (const name of ["authorization", "x-authorization"]) {
+    assert.deepEqual(
+      await resolveApiKeyOwner(
+        withHeaders({ [name]: `Bearer ${OWNER_KEY}` }),
+        env,
+        store,
+      ),
+      expected,
+      name,
+    );
+  }
+
+  // The platform token left in Authorization must not shadow a real key.
+  assert.deepEqual(
+    await resolveApiKeyOwner(
+      withHeaders({
+        "x-authorization": `Bearer ${OWNER_KEY}`,
+        authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.platform.token",
+      }),
+      env,
+      store,
+    ),
+    expected,
+  );
+});
 test("a key stops working the moment its owner leaves AUTHORIZED_USERS", async () => {
   const store = keyStore();
   assert.deepEqual(
@@ -165,10 +186,7 @@ test("one key authorizes the CLI, the MCP endpoint, and whoami", async () => {
     store,
   );
   assert.equal(whoami.status, 200);
-  assert.equal(
-    (whoami.jsonBody as { email: string }).email,
-    OWNER,
-  );
+  assert.deepEqual(whoami.jsonBody, { email: OWNER });
 
   assert.deepEqual(senders, [`${OWNER}:hello`, `${OWNER}:hello`]);
 });

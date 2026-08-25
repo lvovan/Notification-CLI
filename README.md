@@ -411,20 +411,26 @@ The MCP endpoint is:
 https://<your-static-web-app>.azurestaticapps.net/api/mcp
 ```
 
-It authenticates with your personal API key, the same key the CLI uses, sent as
-either header:
+It authenticates with your personal API key, the same key the CLI uses. Any of
+these three headers carries it, and they are equivalent:
 
 ```text
 x-api-key: <key>
+x-authorization: Bearer <key>
 Authorization: Bearer <key>
 ```
 
-Both are equivalent; the bearer form exists because most MCP clients send a
-token that way by default. `x-api-key` wins if a client somehow sends both.
+Prefer one of the first two. **Azure Static Web Apps replaces the
+`Authorization` header with its own platform token before a managed function
+sees it**, so a key sent that way never arrives and the server answers `401` —
+that is a property of the hosting platform, not of this API, and it is why
+`x-authorization` exists. Use it for any client that insists on a
+`Bearer` token; the value and the scheme are identical, only the header name
+differs. `x-api-key` wins if more than one is present.
+
 Copy the key from the API key section of the web app. If you cycle the key
 there, update every MCP client that used it. The two MCP clients differ in how
 they supply that secret, so use the matching example below.
-
 ### VS Code
 
 VS Code resolves `${input:...}` placeholders and prompts once per workspace,
@@ -487,11 +493,13 @@ need to restart the terminal that launches `copilot`. To set it by hand:
   "NOTIFICATION_CLI_API_KEY", "<key>", "User")
 ```
 
-A client that insists on a bearer token works just as well:
+A client that insists on a Bearer token works just as well, as long as it can
+name the header — remember that `Authorization` itself is consumed by Static
+Web Apps:
 
 ```json
 "headers": {
-  "Authorization": "Bearer ${NOTIFICATION_CLI_API_KEY}"
+  "x-authorization": "Bearer ${NOTIFICATION_CLI_API_KEY}"
 }
 ```
 
