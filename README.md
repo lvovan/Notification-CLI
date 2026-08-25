@@ -83,7 +83,9 @@ a thin adapter over that table, so the two cannot drift apart.
    browser out.
 
 3. **Provision** by running the infrastructure workflow with
-   *deploy_app_service* enabled.
+   *deploy_app_service* enabled. It creates `<name_prefix>-wa`. Nothing can be
+   published before this step: an unprovisioned site fails the deploy workflow
+   with `Publish profile is invalid`.
 
 4. **Publish** by setting the repository variable `AZURE_APP_SERVICE_NAME` to
    the site name reported by that run, and storing the site''s publish profile

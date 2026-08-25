@@ -80,7 +80,7 @@ var storageAccountName = take(
 var webPubSubName = '${namePrefix}-wps'
 var staticWebAppName = '${namePrefix}-swa'
 var appServicePlanName = '${namePrefix}-plan'
-var appServiceName = '${namePrefix}-app'
+var appServiceName = '${namePrefix}-wa'
 
 // Table names are fixed by the API. Creating them here makes a fresh
 // deployment immediately consistent, even though the API also creates them on
