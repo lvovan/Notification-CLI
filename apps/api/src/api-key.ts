@@ -9,6 +9,25 @@ export type ApiKeyResolution =
   | { authorized: true; owner: NotificationOwner }
   | { authorized: false };
 
+const BEARER_SCHEME = /^Bearer\s+(.+)$/i;
+
+/**
+ * Reads the key from either accepted header. `x-api-key` is what the CLI
+ * sends; `Authorization: Bearer <key>` is what most MCP clients send by
+ * default, so accepting both saves every client a custom-header setting.
+ */
+export function presentedApiKey(
+  headers: Pick<HttpRequest["headers"], "get">,
+): string | null {
+  const direct = headers.get("x-api-key")?.trim();
+  if (direct) {
+    return direct;
+  }
+
+  const bearer = BEARER_SCHEME.exec(headers.get("authorization") ?? "");
+  return bearer?.[1]?.trim() || null;
+}
+
 /**
  * Resolves the presented key to the account that owns it. Authorization is
  * re-evaluated on every request, so removing an address from AUTHORIZED_USERS
@@ -19,7 +38,7 @@ export async function resolveApiKeyOwner(
   env: NodeJS.ProcessEnv = process.env,
   store?: ApiKeyStore | null,
 ): Promise<ApiKeyResolution> {
-  const presented = request.headers.get("x-api-key");
+  const presented = presentedApiKey(request.headers);
   if (!presented) {
     return { authorized: false };
   }

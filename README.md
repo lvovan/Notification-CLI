@@ -411,11 +411,19 @@ The MCP endpoint is:
 https://<your-static-web-app>.azurestaticapps.net/api/mcp
 ```
 
-It authenticates with an `x-api-key: <key>` header carrying your personal API
-key, the same key the CLI uses. Copy it from the API key section of the web
-app. If you cycle the key there, update every MCP client that used it. The two
-MCP clients differ in how they supply that secret, so use the matching example
-below.
+It authenticates with your personal API key, the same key the CLI uses, sent as
+either header:
+
+```text
+x-api-key: <key>
+Authorization: Bearer <key>
+```
+
+Both are equivalent; the bearer form exists because most MCP clients send a
+token that way by default. `x-api-key` wins if a client somehow sends both.
+Copy the key from the API key section of the web app. If you cycle the key
+there, update every MCP client that used it. The two MCP clients differ in how
+they supply that secret, so use the matching example below.
 
 ### VS Code
 
@@ -479,6 +487,14 @@ need to restart the terminal that launches `copilot`. To set it by hand:
   "NOTIFICATION_CLI_API_KEY", "<key>", "User")
 ```
 
+A client that insists on a bearer token works just as well:
+
+```json
+"headers": {
+  "Authorization": "Bearer ${NOTIFICATION_CLI_API_KEY}"
+}
+```
+
 The server implements stateless Streamable HTTP JSON-RPC and exposes
 `send_notification`. The tool accepts a required `message` string of up to
 1,000 characters.
@@ -487,8 +503,8 @@ The server implements stateless Streamable HTTP JSON-RPC and exposes
 
 `Authentication failed: MCPOAuthError` means the client received a `401` and
 fell back to OAuth. This server uses no OAuth, so the real cause is a missing
-or unexpanded `x-api-key` header — check the placeholder syntax and that the
-variable is set in the shell that started the client.
+or unexpanded key header — check the placeholder syntax and that the variable
+is set in the shell that started the client.
 
 MCP clients probe `/.well-known/oauth-authorization-server/...` and
 `/.well-known/oauth-protected-resource/...` before falling back to static

@@ -87,18 +87,35 @@ test("a key resolves to its own account and nobody else's", async () => {
   );
 });
 
-test("unknown, missing, and Authorization-header keys are rejected", async () => {
+test("unknown and missing keys are rejected", async () => {
   const store = keyStore();
   for (const headers of [
     { "x-api-key": "ncli_not-a-key" },
     {},
-    { authorization: `Bearer ${OWNER_KEY}` },
+    { authorization: "Bearer ncli_not-a-key" },
+    { authorization: `Basic ${OWNER_KEY}` },
   ]) {
     assert.deepEqual(
       await resolveApiKeyOwner(withHeaders(headers), env, store),
       { authorized: false },
     );
   }
+});
+
+// MCP clients default to sending the key as a bearer token, so accepting it
+// there saves every one of them a custom-header setting.
+test("a bearer token is accepted wherever the dedicated header is", async () => {
+  const store = keyStore();
+
+  const resolution = await resolveApiKeyOwner(
+    withHeaders({ authorization: `Bearer ${OWNER_KEY}` }),
+    env,
+    store,
+  );
+  assert.deepEqual(resolution, {
+    authorized: true,
+    owner: { email: OWNER, userKey: userKey(OWNER) },
+  });
 });
 
 test("a key stops working the moment its owner leaves AUTHORIZED_USERS", async () => {

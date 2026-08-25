@@ -8,7 +8,7 @@ import {
   generateApiKey,
   maskApiKey,
 } from "../src/api-key-storage.js";
-import { resolveApiKeyOwner } from "../src/api-key.js";
+import { presentedApiKey, resolveApiKeyOwner } from "../src/api-key.js";
 import { userKey } from "../src/identity.js";
 
 const OWNER = "user@example.com";
@@ -259,4 +259,57 @@ test("the owner row is keyed by the normalized address", async () => {
   // A differently cased sign-in must land on the same account, not a new one.
   const again = await keys.ensure("  User@Example.COM  ");
   assert.equal(again.apiKey, minted.apiKey);
+});
+
+test("the key is read from either accepted header", () => {
+  const cases: Array<[Record<string, string>, string | null]> = [
+    [{ "x-api-key": "ncli_direct" }, "ncli_direct"],
+    [{ authorization: "Bearer ncli_bearer" }, "ncli_bearer"],
+    // Clients are inconsistent about the scheme's casing and spacing.
+    [{ authorization: "bearer   ncli_bearer  " }, "ncli_bearer"],
+    // The dedicated header wins so a client can carry an unrelated token.
+    [
+      { "x-api-key": "ncli_direct", authorization: "Bearer ncli_bearer" },
+      "ncli_direct",
+    ],
+    [{}, null],
+    [{ authorization: "Basic ncli_bearer" }, null],
+    [{ authorization: "Bearer" }, null],
+    [{ authorization: "Bearer   " }, null],
+    [{ "x-api-key": "   " }, null],
+  ];
+
+  for (const [headers, expected] of cases) {
+    assert.equal(
+      presentedApiKey(new Headers(headers)),
+      expected,
+      JSON.stringify(headers),
+    );
+  }
+});
+
+test("a bearer token authorizes exactly like the dedicated header", async () => {
+  const table = new FakeTable();
+  const keys = store(table);
+  const minted = await keys.ensure(OWNER);
+
+  const resolution = await resolveApiKeyOwner(
+    { headers: new Headers({ authorization: `Bearer ${minted.apiKey}` }) },
+    env,
+    keys,
+  );
+  assert.equal(resolution.authorized, true);
+  assert.equal(
+    resolution.authorized && resolution.owner.email,
+    OWNER,
+  );
+
+  assert.deepEqual(
+    await resolveApiKeyOwner(
+      { headers: new Headers({ authorization: "Bearer ncli_wrong" }) },
+      env,
+      keys,
+    ),
+    { authorized: false },
+  );
 });
