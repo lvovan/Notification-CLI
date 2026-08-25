@@ -174,6 +174,43 @@ jobs:
       # The App Service host serves the same frontend and the same API, plus
       # the OAuth authorization server that MCP clients need. It is deployed
       # only once AZURE_APP_SERVICE_NAME names a site.
+      #
+      # The deploy action reports every disagreement between the site name and
+      # the profile as one opaque "publish profile is invalid", so the profile
+      # is checked here first, where the message can name the actual problem.
+      # Only the site name is ever printed; it is not a secret.
+      - name: Check the publish profile
+        if: ${{ vars.AZURE_APP_SERVICE_NAME != '' }}
+        env:
+          PROFILE: ${{ secrets.AZURE_APP_SERVICE_PUBLISH_PROFILE }}
+          APP_NAME: ${{ vars.AZURE_APP_SERVICE_NAME }}
+        run: |
+          if [ -z "$PROFILE" ]; then
+            echo "::error::AZURE_APP_SERVICE_PUBLISH_PROFILE is empty."
+            exit 1
+          fi
+
+          site=$(printf '%s' "$PROFILE" | tr '>' '\n' \
+            | grep -o 'msdeploySite="[^"]*"' | head -1 | cut -d'"' -f2)
+          if [ -z "$site" ]; then
+            echo "::error::The publish profile has no MSDeploy entry. Enable SCM basic authentication on the site, then download the profile again."
+            exit 1
+          fi
+
+          # An empty password is what a profile downloaded while SCM basic
+          # authentication was disabled looks like.
+          if printf '%s' "$PROFILE" | grep -q 'userPWD=""'; then
+            echo "::error::The publish profile carries no credentials. Enable SCM basic authentication on the site, then download the profile again."
+            exit 1
+          fi
+
+          if [ "$site" != "$APP_NAME" ]; then
+            echo "::error::AZURE_APP_SERVICE_NAME is set to '$APP_NAME', but the publish profile belongs to '$site'. Set the variable to '$site', or store the profile of '$APP_NAME'."
+            exit 1
+          fi
+
+          echo "Publishing to $site."
+
       - name: Deploy App Service
         if: ${{ vars.AZURE_APP_SERVICE_NAME != '' }}
         uses: Azure/webapps-deploy@02a81bead70021f5284939794bcec79c271ab383 # v3.0.8

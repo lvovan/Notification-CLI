@@ -106,6 +106,16 @@ a thin adapter over that table, so the two cannot drift apart.
      --name scm --parent sites/<site> --set properties.allow=true
    ```
 
+   `AZURE_APP_SERVICE_NAME` must equal the `msdeploySite` attribute inside that
+   XML, which is the site''s own name without any domain suffix. The deploy
+   action reports every mismatch as `Publish profile is invalid for app-name
+   and slot-name provided`, so the workflow checks the profile first and names
+   the real problem.
+
+   Only **SCM** basic authentication is needed; FTP basic authentication can
+   stay off. Re-download the profile after enabling it, because one downloaded
+   while it was off carries an empty `userPWD`.
+
    The deploy workflow skips the App Service step entirely while
    `AZURE_APP_SERVICE_NAME` is empty.
 
