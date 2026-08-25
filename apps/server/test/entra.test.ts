@@ -100,13 +100,14 @@ test("a configured secret authenticates the client, and otherwise an assertion d
   });
 });
 
-test("a missing secret without a managed identity names the setting", async () => {
+// PKCE already binds the code to this server, so a public-client registration
+// needs no credential at all — the arrangement that needs no Azure-side setup.
+test("no credential is sent when there is none to send", async () => {
   const { clientSecret: _omitted, ...federated } = CONFIG;
+  assert.deepEqual(await clientCredential(federated, () => Promise.resolve(null)), {});
+
   delete process.env.IDENTITY_ENDPOINT;
-  await assert.rejects(
-    () => clientCredential(federated),
-    /NOTIFICATION_CLI_ENTRA_CLIENT_SECRET is not configured and no managed identity is available/,
-  );
+  assert.deepEqual(await clientCredential(federated), {});
 });
 
 // An unconfigured site has to boot: App Service replaces a process that exits

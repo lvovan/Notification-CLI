@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { ConfigurationError, requireSetting } from "@notification-cli/core/configuration";
+import { requireSetting } from "@notification-cli/core/configuration";
 import { requestOrigin } from "./request.js";
 import { GLOBAL_HEADERS } from "./response.js";
 import { clientPrincipal, type SessionProvider } from "./session.js";
@@ -42,24 +42,25 @@ export function readEntraConfig(env: NodeJS.ProcessEnv = process.env): EntraConf
 }
 
 /**
- * Proves the client's identity to the token endpoint.
+ * Proves the client's identity to the token endpoint, if it has to.
  *
- * A secret is used when one is configured. Otherwise the App Service managed
- * identity mints a token for `api://AzureADTokenExchange`, which a federated
- * credential on the application registration trusts — the only way to sign in
- * at all in a tenant whose policy blocks client secrets, and the better option
- * regardless, since nothing secret is ever stored.
+ * Three arrangements work, and the first that is available is used:
+ *
+ * 1. A client secret, when one is configured.
+ * 2. A federated assertion from the App Service managed identity, for a tenant
+ *    whose policy blocks secrets. Nothing secret is stored and nothing expires.
+ * 3. Nothing at all. The authorization code is already bound to this server by
+ *    PKCE, so a public-client registration needs no credential — which is the
+ *    simplest arrangement and the only one that needs no Azure-side plumbing.
  */
-export type AssertionSource = () => Promise<string>;
+export type AssertionSource = () => Promise<string | null>;
 
+/** Null rather than throwing: no identity endpoint just means no assertion. */
 const managedIdentityAssertion: AssertionSource = async () => {
   const endpoint = process.env.IDENTITY_ENDPOINT;
   const header = process.env.IDENTITY_HEADER;
   if (!endpoint || !header) {
-    throw new ConfigurationError(
-      CLIENT_SECRET_ENV,
-      `${CLIENT_SECRET_ENV} is not configured and no managed identity is available to replace it.`,
-    );
+    return null;
   }
   const url = new URL(endpoint);
   url.searchParams.set("resource", TOKEN_EXCHANGE_AUDIENCE);
@@ -80,9 +81,11 @@ export async function clientCredential(
   config: EntraConfig,
   assertion: AssertionSource = managedIdentityAssertion,
 ): Promise<Record<string, string>> {
-  return config.clientSecret
-    ? { client_secret: config.clientSecret }
-    : { client_assertion_type: CLIENT_ASSERTION_TYPE, client_assertion: await assertion() };
+  if (config.clientSecret) {
+    return { client_secret: config.clientSecret };
+  }
+  const token = await assertion();
+  return token ? { client_assertion_type: CLIENT_ASSERTION_TYPE, client_assertion: token } : {};
 }
 
 function base64url(value: Buffer | string): string {
@@ -221,7 +224,19 @@ const exchangeWithEntra: TokenExchange = async (config, body) => {
     },
   );
   if (!response.ok) {
-    throw new Error(`Entra token exchange failed with ${response.status}.`);
+    // The description names the actual defect — a redirect URI registered
+    // under the wrong platform, an expired secret, a rejected assertion —
+    // and guessing at it from the status alone is hopeless.
+    const detail = await response.text();
+    let description: string | undefined;
+    try {
+      description = (JSON.parse(detail) as { error_description?: string }).error_description;
+    } catch {
+      description = undefined;
+    }
+    throw new Error(
+      `Entra token exchange failed with ${response.status}: ${description ?? detail}`,
+    );
   }
   return (await response.json()) as { id_token?: string };
 };
