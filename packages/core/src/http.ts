@@ -42,3 +42,26 @@ export interface CoreResponse {
 export interface CoreLogger {
   error(message: string): void;
 }
+
+/**
+ * The origin a client used to reach this request.
+ *
+ * Behind Static Web Apps the request URL carries the internal Functions
+ * hostname, so anything a client is expected to call back on — the OAuth
+ * metadata, the token audience — has to come from the forwarded headers
+ * instead. `apps/server` builds the URL from those same headers already, so
+ * this agrees with it.
+ */
+export function requestOrigin(request: Pick<CoreRequest, "url" | "headers">): string {
+  const host = first(request.headers.get("x-forwarded-host"));
+  if (host === null) {
+    return new URL(request.url).origin;
+  }
+  const protocol = first(request.headers.get("x-forwarded-proto")) ?? "https";
+  return `${protocol}://${host}`;
+}
+
+function first(header: string | null): string | null {
+  const value = header?.split(",")[0]?.trim();
+  return value === undefined || value === "" ? null : value;
+}

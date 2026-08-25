@@ -1,4 +1,9 @@
-import type { CoreRequest, CoreResponse, CoreLogger } from "./http.js";
+import {
+  requestOrigin,
+  type CoreRequest,
+  type CoreResponse,
+  type CoreLogger,
+} from "./http.js";
 import { resolveApiKeyOwner } from "./api-key.js";
 import type { ApiKeyStore } from "./api-key-storage.js";
 import { ConfigurationError } from "./configuration.js";
@@ -12,8 +17,8 @@ import type { NotificationOwner } from "./identity.js";
 import type { OAuthStore } from "./oauth-storage.js";
 
 /** Where a client is told to look for the authorization server (RFC 9728). */
-function protectedResourceMetadataUrl(url: string): string {
-  return `${new URL(url).origin}/.well-known/oauth-protected-resource/api/mcp`;
+function protectedResourceMetadataUrl(request: CoreRequest): string {
+  return `${requestOrigin(request)}/.well-known/oauth-protected-resource/api/mcp`;
 }
 
 interface JsonRpcRequest {
@@ -92,7 +97,7 @@ export async function handleMcpRequest(
       return {
         status: 401,
         headers: {
-          "WWW-Authenticate": `Bearer resource_metadata="${protectedResourceMetadataUrl(request.url)}"`,
+          "WWW-Authenticate": `Bearer resource_metadata="${protectedResourceMetadataUrl(request)}"`,
         },
         jsonBody: { error: "Unauthorized" },
       };

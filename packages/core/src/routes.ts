@@ -1,3 +1,4 @@
+import { requestOrigin } from "./http.js";
 import type { CoreLogger, CoreRequest, CoreResponse } from "./http.js";
 import { handleApiKeyCycleRequest, handleApiKeyRequest } from "./apikey.js";
 import { handleNegotiateRequest, handleSessionRequest } from "./browser.js";
@@ -96,22 +97,22 @@ export const OAUTH_ROUTES: readonly CoreRoute[] = [
   {
     method: "GET",
     path: "/.well-known/oauth-protected-resource",
-    handler: (request) => protectedResourceMetadata(new URL(request.url).origin),
+    handler: (request) => protectedResourceMetadata(requestOrigin(request)),
   },
   {
     method: "GET",
     path: "/.well-known/oauth-protected-resource/api/mcp",
-    handler: (request) => protectedResourceMetadata(new URL(request.url).origin),
+    handler: (request) => protectedResourceMetadata(requestOrigin(request)),
   },
   {
     method: "GET",
     path: "/.well-known/oauth-authorization-server",
-    handler: (request) => authorizationServerMetadata(new URL(request.url).origin),
+    handler: (request) => authorizationServerMetadata(requestOrigin(request)),
   },
   {
     method: "GET",
     path: "/.well-known/openid-configuration",
-    handler: (request) => authorizationServerMetadata(new URL(request.url).origin),
+    handler: (request) => authorizationServerMetadata(requestOrigin(request)),
   },
   { method: "GET", path: "/oauth/jwks", handler: (request) => handleJwksRequest(request) },
   { method: "POST", path: "/oauth/register", handler: (request) => handleRegisterRequest(request) },

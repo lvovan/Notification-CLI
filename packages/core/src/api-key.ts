@@ -1,4 +1,4 @@
-import type { CoreRequest, CoreHeaders } from "./http.js";
+import { requestOrigin, type CoreRequest, type CoreHeaders } from "./http.js";
 import { AUTHORIZED_USERS_ENV, parseAuthorizedUsers } from "./auth.js";
 import {
   API_KEY_PREFIX,
@@ -72,7 +72,7 @@ export async function resolveApiKeyOwner(
 
   const email = presented.startsWith(API_KEY_PREFIX)
     ? await resolveKey(presented, env, store)
-    : await resolveAccessToken(presented, request.url, env, oauth);
+    : await resolveAccessToken(presented, requestOrigin(request), env, oauth);
   if (!email) {
     return { authorized: false };
   }
@@ -105,7 +105,7 @@ async function resolveKey(
  */
 async function resolveAccessToken(
   presented: string,
-  url: string,
+  origin: string,
   env: NodeJS.ProcessEnv,
   store?: OAuthStore | null,
 ): Promise<string | null> {
@@ -117,7 +117,6 @@ async function resolveAccessToken(
   if (!claims) {
     return null;
   }
-  const origin = new URL(url).origin;
   if (claims.iss !== origin || claims.aud !== resourceIdentifier(origin)) {
     return null;
   }

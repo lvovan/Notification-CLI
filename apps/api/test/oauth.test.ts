@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash, randomBytes } from "node:crypto";
+import { requestOrigin } from "@notification-cli/core/http";
 import type { CoreRequest, CoreResponse } from "@notification-cli/core/http";
 import { resolveApiKeyOwner } from "@notification-cli/core/api-key";
 import { handleMcpRequest } from "@notification-cli/core/mcp";
@@ -520,5 +521,38 @@ test("an unauthenticated MCP call advertises where to get a token", async () => 
   assert.equal(
     response.headers?.["WWW-Authenticate"],
     `Bearer resource_metadata="${ORIGIN}/.well-known/oauth-protected-resource/api/mcp"`,
+  );
+});
+
+
+// Behind Static Web Apps the request URL names the internal Functions host, so
+// a client told to look there would never find the metadata.
+test("discovery follows the forwarded host rather than the internal one", async () => {
+  const internal = {
+    ...request("POST", "/api/mcp", { signedIn: false }),
+    url: "https://internal.azurewebsites.net/api/mcp",
+    headers: new Headers({
+      "x-forwarded-host": "notify.example.com",
+      "x-forwarded-proto": "https",
+    }),
+  };
+
+  const response = await handleMcpRequest(
+    internal,
+    env,
+    undefined,
+    undefined,
+    null,
+    new MemoryOAuthStore(),
+  );
+
+  assert.equal(response.status, 401);
+  assert.equal(
+    response.headers?.["WWW-Authenticate"],
+    `Bearer resource_metadata="https://notify.example.com/.well-known/oauth-protected-resource/api/mcp"`,
+  );
+  assert.equal(
+    (protectedResourceMetadata(requestOrigin(internal)).jsonBody as { resource: string }).resource,
+    "https://notify.example.com/api/mcp",
   );
 });

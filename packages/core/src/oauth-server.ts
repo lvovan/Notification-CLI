@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { authorizeBrowserRequest } from "./auth.js";
-import type { CoreRequest, CoreResponse } from "./http.js";
+import { requestOrigin, type CoreRequest, type CoreResponse } from "./http.js";
 import { publicJwk, signJwt, type AccessTokenClaims } from "./oauth-jwt.js";
 import {
   secretToken,
@@ -21,10 +21,6 @@ const JSON_NO_STORE = { ...NO_STORE, "Content-Type": "application/json" };
 /** The audience every access token is minted for. */
 export function resourceIdentifier(origin: string): string {
   return `${origin}/api/mcp`;
-}
-
-function originOf(request: CoreRequest): string {
-  return new URL(request.url).origin;
 }
 
 function oauthError(status: number, error: string, description: string): CoreResponse {
@@ -328,7 +324,7 @@ export async function handleAuthorizeRequest(
   if (!store) {
     return oauthError(503, "temporarily_unavailable", "Storage is not configured.");
   }
-  const origin = originOf(request);
+  const origin = requestOrigin(request);
   const url = new URL(request.url);
 
   const authorization = authorizeBrowserRequest(request, env);
@@ -376,7 +372,7 @@ export async function handleAuthorizeDecision(
     );
   }
 
-  const origin = originOf(request);
+  const origin = requestOrigin(request);
   const form = new URLSearchParams(await request.text());
   const validation = await validateAuthorize(request, origin, store, form);
   if (!validation.ok) {
@@ -438,7 +434,7 @@ export async function handleTokenRequest(
   const form = new URLSearchParams(await request.text());
   const grantType = form.get("grant_type");
   const issuedAt = Math.floor(now().getTime() / 1000);
-  const origin = originOf(request);
+  const origin = requestOrigin(request);
 
   const grant =
     grantType === "authorization_code"
