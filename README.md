@@ -71,7 +71,8 @@ a thin adapter over that table, so the two cannot drift apart.
 
 2. **Store the deployment configuration** as repository variables
    `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID`, and repository secrets
-   `ENTRA_CLIENT_SECRET` and `SESSION_SECRET`.
+   `ENTRA_CLIENT_SECRET` and `SESSION_SECRET`. Leave `ENTRA_CLIENT_SECRET`
+   empty to authenticate with the site's managed identity instead.
 
    The session secret is the HMAC key that signs the sign-in cookie and the
    cookie carrying the OAuth `state` and PKCE verifier, so it is what stops
@@ -190,15 +191,52 @@ exposed API, no app roles, no Graph permissions.
    `AzureADMyOrg` and a GUID they are rejected before the consent screen. If you
    sign in with `@outlook.com` or `@hotmail.com`, use `common`.
 
-3. **Create a client secret.** *Certificates & secrets → New client secret*.
-   Copy the **Value**, not the Secret ID; it is shown once and cannot be
-   retrieved afterwards. Note the expiry — sign-in breaks on that date with a
-   `502` from the callback, and the fix is to issue a new secret and update
-   `NOTIFICATION_CLI_ENTRA_CLIENT_SECRET`.
+3. **Give the application a credential.** Either a client secret or, if your
+   tenant forbids one, a federated credential. Both are supported; leaving
+   `NOTIFICATION_CLI_ENTRA_CLIENT_SECRET` unset selects the second.
+
+   **A client secret.** *Certificates & secrets → New client secret*. Copy the
+   **Value**, not the Secret ID; it is shown once and cannot be retrieved
+   afterwards. Note the expiry — sign-in breaks on that date with a `502` from
+   the callback, and the fix is to issue a new secret and update the setting.
 
    ```powershell
    az ad app credential reset --id <app-id> --append --years 2
    ```
+
+   **A federated credential, with no secret at all.** Many tenants block
+   secrets by policy (`Authentication_Blocked` or a *Failed to add a client
+   secret* error from an app management policy). The App Service then proves
+   its identity with its own managed identity instead. Nothing secret is stored
+   anywhere, and nothing expires, so this is worth preferring even where
+   secrets are permitted.
+
+   Enable a system-assigned identity on the site — the Bicep does this — and
+   register its principal as a federated credential on the application:
+
+   ```powershell
+   $principal = az webapp identity assign --name <site> `
+     --resource-group notification-cli --query principalId --output tsv
+
+   az ad app federated-credential create --id <app-id> --parameters (@{
+     name = "notification-cli-app-service"
+     issuer = "https://login.microsoftonline.com/<tenant-guid>/v2.0"
+     subject = $principal
+     audiences = @("api://AzureADTokenExchange")
+   } | ConvertTo-Json -Compress)
+   ```
+
+   The issuer must name the directory the **managed identity** lives in, as a
+   GUID, even when `NOTIFICATION_CLI_ENTRA_TENANT_ID` is `common` for sign-in:
+   one is where the site's identity comes from, the other is who may sign in.
+   `az account show --query tenantId` gives it.
+
+   The site then reads a token for `api://AzureADTokenExchange` from the local
+   identity endpoint and presents it as a `client_assertion` during the code
+   exchange. If the assertion is rejected, Entra ID answers the callback with a
+   `502` and the cause is almost always a subject that does not match the
+   current principal ID — it changes if the identity is ever disabled and
+   re-enabled.
 
 4. **Leave API permissions alone.** The sign-in requests `openid profile email`
    and nothing else. These are OpenID Connect scopes, granted by the identity
@@ -216,10 +254,13 @@ exposed API, no app roles, no Graph permissions.
    covers it. If sign-in fails with `Entra ID did not return an email address`,
    add `email` under *Token configuration → Add optional claim → ID*.
 
-6. **Record the three values** — application (client) ID, the tenant value from
-   the table, and the secret — and set them as
-   `NOTIFICATION_CLI_ENTRA_CLIENT_ID`, `NOTIFICATION_CLI_ENTRA_TENANT_ID` and
-   `NOTIFICATION_CLI_ENTRA_CLIENT_SECRET`.
+6. **Record the values** — the application (client) ID and the tenant value
+   from the table, as `NOTIFICATION_CLI_ENTRA_CLIENT_ID` and
+   `NOTIFICATION_CLI_ENTRA_TENANT_ID`, plus
+   `NOTIFICATION_CLI_ENTRA_CLIENT_SECRET` if you chose a secret. Omitting that
+   last setting is what selects the federated credential, so an empty value and
+   a wrong value fail very differently: the first attempts an assertion, the
+   second is rejected by the token endpoint.
 
 Authenticating is not the same as being allowed in. Anyone in the chosen
 audience can complete sign-in; `AUTHORIZED_USERS` decides who the application
@@ -243,7 +284,7 @@ has none of it, and shows two symptoms in turn:
     AUTHORIZED_USERS="you@example.com" `
     NOTIFICATION_CLI_ENTRA_TENANT_ID="<tenant>" `
     NOTIFICATION_CLI_ENTRA_CLIENT_ID="<client>" `
-    NOTIFICATION_CLI_ENTRA_CLIENT_SECRET="<secret>" `
+    NOTIFICATION_CLI_ENTRA_CLIENT_SECRET="<secret, or omit for a federated credential>" `
     NOTIFICATION_CLI_SESSION_SECRET="<32 random bytes, base64>"
   ```
 
@@ -391,7 +432,7 @@ settings from the hosting section in the environment:
 cd dist\server
 $env:NOTIFICATION_CLI_ENTRA_TENANT_ID = "<tenant>"
 $env:NOTIFICATION_CLI_ENTRA_CLIENT_ID = "<client>"
-$env:NOTIFICATION_CLI_ENTRA_CLIENT_SECRET = "<secret>"
+$env:NOTIFICATION_CLI_ENTRA_CLIENT_SECRET = "<secret>"   # required locally: no managed identity
 $env:NOTIFICATION_CLI_SESSION_SECRET = "<32 random bytes, base64>"
 node dist\main.js
 ```
@@ -483,7 +524,7 @@ created instance:
 | `NOTIFICATION_CLI_RETENTION_DAYS` | Optional. Whole number of days notifications stay readable in the frontend. Defaults to `7`, maximum `365` |
 | `NOTIFICATION_CLI_ENTRA_TENANT_ID` | App Service only. Directory of the Entra application used to sign users in |
 | `NOTIFICATION_CLI_ENTRA_CLIENT_ID` | App Service only. Application ID of that registration |
-| `NOTIFICATION_CLI_ENTRA_CLIENT_SECRET` | App Service only. Client secret of that registration |
+| `NOTIFICATION_CLI_ENTRA_CLIENT_SECRET` | App Service only. Client secret of that registration. Optional: leave it unset to authenticate with the managed identity instead |
 | `NOTIFICATION_CLI_SESSION_SECRET` | App Service only. The HMAC key signing the sign-in cookie; generate 32 random bytes as shown in [Hosting](#hosting). Changing it signs every browser out |
 | `NOTIFICATION_CLI_WEB_ROOT` | App Service only. Optional path to the frontend files. Defaults to `web` next to the bundle |
 

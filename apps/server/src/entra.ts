@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { requireSetting } from "@notification-cli/core/configuration";
+import { ConfigurationError, requireSetting } from "@notification-cli/core/configuration";
 import { requestOrigin } from "./request.js";
 import { GLOBAL_HEADERS } from "./response.js";
 import { clientPrincipal, type SessionProvider } from "./session.js";
@@ -9,6 +9,10 @@ export const TENANT_ID_ENV = "NOTIFICATION_CLI_ENTRA_TENANT_ID";
 export const CLIENT_ID_ENV = "NOTIFICATION_CLI_ENTRA_CLIENT_ID";
 export const CLIENT_SECRET_ENV = "NOTIFICATION_CLI_ENTRA_CLIENT_SECRET";
 export const SESSION_SECRET_ENV = "NOTIFICATION_CLI_SESSION_SECRET";
+
+/** The audience Entra ID requires of a federated client assertion. */
+const TOKEN_EXCHANGE_AUDIENCE = "api://AzureADTokenExchange";
+const CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
 const SESSION_COOKIE = "ncli_session";
 const FLOW_COOKIE = "ncli_flow";
@@ -19,17 +23,66 @@ const CALLBACK_PATH = "/.auth/login/aad/callback";
 export interface EntraConfig {
   tenantId: string;
   clientId: string;
-  clientSecret: string;
+  /**
+   * Omitted when the tenant forbids client secrets. The App Service managed
+   * identity then supplies a federated assertion instead.
+   */
+  clientSecret?: string;
   sessionSecret: string;
 }
 
 export function readEntraConfig(env: NodeJS.ProcessEnv = process.env): EntraConfig {
+  const clientSecret = env[CLIENT_SECRET_ENV]?.trim();
   return {
     tenantId: requireSetting(env, TENANT_ID_ENV),
     clientId: requireSetting(env, CLIENT_ID_ENV),
-    clientSecret: requireSetting(env, CLIENT_SECRET_ENV),
+    ...(clientSecret ? { clientSecret } : {}),
     sessionSecret: requireSetting(env, SESSION_SECRET_ENV),
   };
+}
+
+/**
+ * Proves the client's identity to the token endpoint.
+ *
+ * A secret is used when one is configured. Otherwise the App Service managed
+ * identity mints a token for `api://AzureADTokenExchange`, which a federated
+ * credential on the application registration trusts — the only way to sign in
+ * at all in a tenant whose policy blocks client secrets, and the better option
+ * regardless, since nothing secret is ever stored.
+ */
+export type AssertionSource = () => Promise<string>;
+
+const managedIdentityAssertion: AssertionSource = async () => {
+  const endpoint = process.env.IDENTITY_ENDPOINT;
+  const header = process.env.IDENTITY_HEADER;
+  if (!endpoint || !header) {
+    throw new ConfigurationError(
+      CLIENT_SECRET_ENV,
+      `${CLIENT_SECRET_ENV} is not configured and no managed identity is available to replace it.`,
+    );
+  }
+  const url = new URL(endpoint);
+  url.searchParams.set("resource", TOKEN_EXCHANGE_AUDIENCE);
+  url.searchParams.set("api-version", "2019-08-01");
+
+  const response = await fetch(url, { headers: { "X-IDENTITY-HEADER": header } });
+  if (!response.ok) {
+    throw new Error(`The managed identity returned ${response.status}.`);
+  }
+  const { access_token: token } = (await response.json()) as { access_token?: string };
+  if (!token) {
+    throw new Error("The managed identity returned no token.");
+  }
+  return token;
+};
+
+export async function clientCredential(
+  config: EntraConfig,
+  assertion: AssertionSource = managedIdentityAssertion,
+): Promise<Record<string, string>> {
+  return config.clientSecret
+    ? { client_secret: config.clientSecret }
+    : { client_assertion_type: CLIENT_ASSERTION_TYPE, client_assertion: await assertion() };
 }
 
 function base64url(value: Buffer | string): string {
@@ -187,6 +240,7 @@ const exchangeWithEntra: TokenExchange = async (config, body) => {
 export function createEntraSessionProvider(
   config: EntraConfig,
   exchange: TokenExchange = exchangeWithEntra,
+  assertion: AssertionSource = managedIdentityAssertion,
 ): SessionProvider {
   const startLogin = (message: IncomingMessage, response: ServerResponse, url: URL): void => {
     const verifier = base64url(randomBytes(32));
@@ -239,7 +293,7 @@ export function createEntraSessionProvider(
       config,
       new URLSearchParams({
         client_id: config.clientId,
-        client_secret: config.clientSecret,
+        ...(await clientCredential(config, assertion)),
         grant_type: "authorization_code",
         code,
         redirect_uri: `${requestOrigin(message)}${CALLBACK_PATH}`,

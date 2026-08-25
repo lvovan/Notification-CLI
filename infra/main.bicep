@@ -243,6 +243,11 @@ resource appService 'Microsoft.Web/sites@2024-11-01' = if (deployAppService) {
   name: appServiceName
   location: location
   kind: 'app,linux'
+  // The identity is what lets the site authenticate to Entra ID without a
+  // client secret, which some tenants forbid by policy.
+  identity: {
+    type: 'SystemAssigned'
+  }
   properties: {
     serverFarmId: appServicePlan.id
     httpsOnly: true
@@ -301,3 +306,6 @@ output appServiceName string = deployAppService ? appServiceName : ''
 
 @description('Hostname of the App Service host, empty when it was not deployed. This is the origin MCP clients discover the authorization server on.')
 output appServiceHostname string = deployAppService ? appService!.properties.defaultHostName : ''
+
+@description('Subject of the federated credential to add when no client secret is used.')
+output appServicePrincipalId string = deployAppService ? appService!.identity.principalId : ''

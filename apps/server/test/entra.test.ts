@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { ConfigurationError } from "@notification-cli/core/configuration";
 import {
+  clientCredential,
   createEntraSessionProvider,
   parseCookies,
   readEntraConfig,
@@ -73,6 +74,39 @@ async function signIn(origin: string, exchangeState?: (state: string) => string)
 test("the configuration must be complete", () => {
   assert.throws(() => readEntraConfig({}), ConfigurationError);
   assert.throws(() => readEntraConfig({}), /NOTIFICATION_CLI_ENTRA_TENANT_ID is not configured/);
+});
+
+// A tenant policy can forbid client secrets outright, so the secret is optional
+// and a federated managed-identity assertion stands in for it.
+test("the client secret is optional", () => {
+  const env = {
+    NOTIFICATION_CLI_ENTRA_TENANT_ID: "tenant",
+    NOTIFICATION_CLI_ENTRA_CLIENT_ID: "client",
+    NOTIFICATION_CLI_SESSION_SECRET: "secret",
+  };
+  assert.equal(readEntraConfig(env).clientSecret, undefined);
+  assert.equal(readEntraConfig({ ...env, NOTIFICATION_CLI_ENTRA_CLIENT_SECRET: " " }).clientSecret, undefined);
+});
+
+test("a configured secret authenticates the client, and otherwise an assertion does", async () => {
+  assert.deepEqual(await clientCredential(CONFIG, () => Promise.reject(new Error("unused"))), {
+    client_secret: "secret",
+  });
+
+  const { clientSecret: _omitted, ...federated } = CONFIG;
+  assert.deepEqual(await clientCredential(federated, () => Promise.resolve("assertion")), {
+    client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+    client_assertion: "assertion",
+  });
+});
+
+test("a missing secret without a managed identity names the setting", async () => {
+  const { clientSecret: _omitted, ...federated } = CONFIG;
+  delete process.env.IDENTITY_ENDPOINT;
+  await assert.rejects(
+    () => clientCredential(federated),
+    /NOTIFICATION_CLI_ENTRA_CLIENT_SECRET is not configured and no managed identity is available/,
+  );
 });
 
 // An unconfigured site has to boot: App Service replaces a process that exits
