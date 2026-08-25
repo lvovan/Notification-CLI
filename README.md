@@ -72,26 +72,47 @@ Remove-Item Env:GOOS, Env:GOARCH
 First obtain your personal API key: sign in to the deployed web app, open the
 **API key** section, and copy the key. The key belongs to your account alone.
 
-Set the deployed Static Web App URL and your personal API key in the
-environment instead of passing secrets on the command line:
+Then run:
 
 ```powershell
-$env:NOTIFICATION_CLI_API_URL = "https://<your-static-web-app>.azurestaticapps.net"
-$env:NOTIFICATION_CLI_API_KEY = "<your-personal-api-key>"
 notify --configure
-Remove-Item Env:NOTIFICATION_CLI_API_URL
-Remove-Item Env:NOTIFICATION_CLI_API_KEY
 ```
 
-`--configure` tests the endpoint with the two environment variables before it
-saves anything, then reports the outcome:
+The CLI asks for the two settings interactively — no environment variables are
+involved, and the key never appears on the command line or in your shell
+history:
+
+```text
+Service URL: https://<your-static-web-app>.azurestaticapps.net ✔
+API key: ●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●● ✔
+```
+
+Both answers are validated as you type, and a prompt refuses to submit until
+its answer is usable. The URL must be absolute and use HTTPS (HTTP is allowed
+only for localhost), and the API key must start with `ncli_`. The key is
+masked, and a previously saved one is never shown back; the current URL is
+offered as an editable default, so re-configuring is mostly a matter of
+pressing Enter. Press Ctrl+C to cancel without changing anything.
+
+`--configure` then tests the endpoint before it saves anything, and reports the
+outcome:
 
 ```text
 Testing https://<your-static-web-app>.azurestaticapps.net/api/whoami
 Result:  SUCCESS
 Account: you@example.com
 Saved:   C:\Users\you\AppData\Local\Notification CLI\config.json
+Export:  NOTIFICATION_CLI_API_URL and NOTIFICATION_CLI_API_KEY -> user environment (restart open terminals to pick it up)
 ```
+
+The final step publishes the same two settings to your **user** environment,
+purely so MCP clients — which have no configuration file of their own — can
+pick them up. On Windows they are written to `HKCU\Environment` and broadcast
+so newly launched programs see them; on macOS and Linux a marked block is
+rewritten in your login shell profile (`~/.zprofile`, `~/.bash_profile` or
+`~/.profile`). The CLI itself never reads them back. If the export fails the
+line reads `Export:  FAILED (…)`, which is a warning only — the configuration
+is already saved and the CLI works.
 
 The account line is informational — a service that does not report one still
 counts as a working configuration and prints
@@ -101,15 +122,18 @@ Windows the configuration lives in `%LOCALAPPDATA%\Notification CLI\config.json`
 on macOS and Linux it is under the operating system's user configuration
 directory.
 
+Because the prompts need somewhere to ask, `--configure` requires an
+interactive terminal and refuses to run from a pipe or an unattended script.
+Sending notifications does not: only the saved configuration is read.
+
 Cycling the key from the web app's API key section invalidates the old key
 immediately, so afterwards you must re-run `notify --configure` and update
 every MCP client that used it. Removing your address from `AUTHORIZED_USERS`
 revokes your key just as immediately.
 
-The two environment variables take precedence over saved configuration when
-both are present. The CLI sends through `/api/notify`, allowing the server to
-resolve the key to your account and fan out each message to your active Web
-PubSub clients and closed subscribed PWAs.
+The CLI sends through `/api/notify`, allowing the server to resolve the key to
+your account and fan out each message to your active Web PubSub clients and
+closed subscribed PWAs.
 
 ## Send a notification
 
@@ -413,7 +437,7 @@ storing the answer in its secret storage. Add to `.vscode/mcp.json`:
     {
       "id": "notification-cli-api-key",
       "type": "promptString",
-      "description": "Value of NOTIFICATION_CLI_API_KEY",
+      "description": "Notification CLI API key",
       "password": true
     }
   ]
@@ -445,7 +469,10 @@ verbatim, which the server rejects with `401`. Add to
 
 `NOTIFICATION_CLI_API_KEY` must be set in the environment that launches
 `copilot`, otherwise the header is sent empty and the server answers `401`.
-Persist it for future sessions with:
+This variable belongs to the MCP client, which has no configuration file of its
+own; `notify` itself ignores it and reads only what `--configure` saved.
+`notify --configure` sets it for you at user scope, so in most cases you only
+need to restart the terminal that launches `copilot`. To set it by hand:
 
 ```powershell
 [Environment]::SetEnvironmentVariable(
@@ -514,6 +541,35 @@ The cabinet holding the executable is embedded in the MSI
 next to the installer, and the install fails with *Source file not found:
 cab1.cab* as soon as the MSI is moved or downloaded on its own.
 
+## macOS installer
+
+The same workflow builds `NotificationCLI-macos.pkg` on a macOS runner and
+publishes it, alongside the bare `notify` binary, as the `NotificationCLI-macos`
+artifact. The binary is universal: the Intel and Apple silicon builds are joined
+with `lipo`, so one package serves both.
+
+The package installs `notify` into `/usr/local/bin`, which is already on the
+default macOS `PATH` — that is the equivalent of the MSI's `PATH` entry, with
+nothing to add or remove. Open a new terminal afterwards and run
+`notify --configure` once per user account.
+
+To build it locally on a Mac:
+
+```bash
+version=$(date -u +"%Y%m%d.%H%M%S")
+mkdir -p pkgroot
+for arch in amd64 arm64; do
+  GOOS=darwin GOARCH=$arch go build -trimpath \
+    -ldflags "-s -w -X main.version=$version" -o "notify-darwin-$arch" apps/cli
+done
+lipo -create -output pkgroot/notify notify-darwin-amd64 notify-darwin-arm64
+pkgbuild --root pkgroot --identifier dev.lvovan.notificationcli \
+  --version 1.0.1 --install-location /usr/local/bin NotificationCLI-macos.pkg
+```
+
+The package is unsigned, so the first install needs the right-click **Open**
+path or an explicit allow in **System Settings → Privacy & Security**.
+
 ## Deploy
 
 Provision the infrastructure first, then add the Static Web App deployment
@@ -539,6 +595,13 @@ deployment in this order:
 3. Deploy.
 4. Each user signs in, copies their new personal key from the API key section
    of the UI, then re-runs `notify --configure` and updates their MCP config.
+
+The CLI no longer *reads* `NOTIFICATION_CLI_API_URL` or
+`NOTIFICATION_CLI_API_KEY`; the saved configuration is its only source of
+settings. It does still *write* both at user scope during `--configure`, purely
+for the Copilot CLI MCP client, which has no configuration file of its own. Any
+copies you persisted elsewhere — machine-scope variables, shell profiles, CI
+settings — are obsolete and should be removed.
 
 ## Security
 

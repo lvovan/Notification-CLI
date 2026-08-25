@@ -19,7 +19,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: "1.24.x"
+          go-version: "1.25.x"
           cache-dependency-path: apps/cli/go.mod
 
       - name: Test CLI
@@ -73,8 +73,66 @@ jobs:
             artifacts/NotificationCLI-arm64.msi
           if-no-files-found: error
 
+  build-cli-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: apps/cli/go.mod
+
+      - name: Test CLI
+        working-directory: apps/cli
+        run: go test ./...
+
+      - name: Build universal CLI
+        working-directory: apps/cli
+        env:
+          GOOS: darwin
+        run: |
+          set -euo pipefail
+          buildVersion=$(date -u +"%Y%m%d.%H%M%S")
+          mkdir -p ../../artifacts/pkgroot
+          # One universal binary rather than two downloads: lipo joins the
+          # Intel and Apple silicon builds into a single executable.
+          for arch in amd64 arm64; do
+            GOARCH=$arch go build -trimpath \
+              -ldflags "-s -w -X main.version=$buildVersion" \
+              -o "../../artifacts/notify-darwin-$arch" .
+          done
+          lipo -create -output ../../artifacts/pkgroot/notify \
+            ../../artifacts/notify-darwin-amd64 ../../artifacts/notify-darwin-arm64
+          chmod 755 ../../artifacts/pkgroot/notify
+          lipo -info ../../artifacts/pkgroot/notify
+
+      - name: Build installer package
+        run: |
+          set -euo pipefail
+          # /usr/local/bin is already on the default PATH, so the package needs
+          # no equivalent of the MSI's PATH entry.
+          pkgbuild --root artifacts/pkgroot \
+            --identifier dev.lvovan.notificationcli \
+            --version "1.0.${GITHUB_RUN_NUMBER}" \
+            --install-location /usr/local/bin \
+            artifacts/NotificationCLI-macos.pkg
+
+      - name: Upload CLI installer
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: NotificationCLI-macos
+          path: |
+            artifacts/pkgroot/notify
+            artifacts/NotificationCLI-macos.pkg
+          if-no-files-found: error
+
   deploy:
-    needs: build-cli
+    needs:
+      - build-cli
+      - build-cli-macos
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

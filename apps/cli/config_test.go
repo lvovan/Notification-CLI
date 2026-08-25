@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-const testAPIKey = "test-secret-key"
+const testAPIKey = "ncli_testsecretkey"
 
 func TestValidateAPIURL(t *testing.T) {
 	t.Parallel()
@@ -34,8 +34,6 @@ func TestSaveAndLoadConfiguration(t *testing.T) {
 	if err := saveConfiguration(expected, path); err != nil {
 		t.Fatalf("save configuration: %v", err)
 	}
-	t.Setenv(apiURLEnvironmentVariable, "")
-	t.Setenv(apiKeyEnvironmentVariable, "")
 
 	actual, err := loadConfiguration(path)
 	if err != nil {
@@ -46,27 +44,55 @@ func TestSaveAndLoadConfiguration(t *testing.T) {
 	}
 }
 
-func TestEnvironmentTakesPrecedence(t *testing.T) {
-	t.Setenv(apiURLEnvironmentVariable, "https://alternate.example")
-	t.Setenv(apiKeyEnvironmentVariable, testAPIKey)
-
-	actual, err := loadConfiguration(filepath.Join(t.TempDir(), "missing.json"))
-	if err != nil {
-		t.Fatalf("load environment configuration: %v", err)
+// The environment variables are gone, so a leftover value must not be able to
+// redirect a notification to another service.
+func TestEnvironmentIsIgnored(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	saved := configuration{APIURL: "https://example.com", APIKey: testAPIKey}
+	if err := saveConfiguration(saved, path); err != nil {
+		t.Fatalf("save configuration: %v", err)
 	}
-	if actual.APIURL != "https://alternate.example" || actual.APIKey != testAPIKey {
-		t.Fatalf("unexpected configuration: %#v", actual)
+	for _, name := range []string{"NOTIFICATION_CLI_API_URL", "NOTIFICATION_CLI_API_KEY"} {
+		t.Setenv(name, "https://attacker.example")
+	}
+
+	actual, err := loadConfiguration(path)
+	if err != nil {
+		t.Fatalf("load configuration: %v", err)
+	}
+	if actual != saved {
+		t.Fatalf("environment leaked into configuration: %#v", actual)
 	}
 }
 
 func TestMissingConfigurationExplainsHowToConfigure(t *testing.T) {
-	t.Setenv(apiURLEnvironmentVariable, "")
-	t.Setenv(apiKeyEnvironmentVariable, "")
+	t.Setenv("NOTIFICATION_CLI_API_URL", "https://alternate.example")
+	t.Setenv("NOTIFICATION_CLI_API_KEY", testAPIKey)
+
 	_, err := loadConfiguration(filepath.Join(t.TempDir(), "missing.json"))
-	if err == nil ||
-		!strings.Contains(err.Error(), apiURLEnvironmentVariable) ||
-		!strings.Contains(err.Error(), apiKeyEnvironmentVariable) {
+	if err == nil || !strings.Contains(err.Error(), "--configure") {
 		t.Fatalf("expected actionable configuration error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "NOTIFICATION_CLI_API") {
+		t.Fatalf("error still advertises the obsolete environment variables: %v", err)
+	}
+}
+
+func TestValidateAPIKeyRequiresPrefix(t *testing.T) {
+	t.Parallel()
+
+	if err := validateAPIKey(testAPIKey); err != nil {
+		t.Fatalf("expected prefixed key to be accepted: %v", err)
+	}
+	for name, value := range map[string]string{
+		"empty":       "",
+		"unprefixed":  "secret",
+		"wrong case":  "NCLI_secret",
+		"prefix late": "xncli_secret",
+	} {
+		if err := validateAPIKey(value); err == nil {
+			t.Fatalf("expected %s key to be rejected", name)
+		}
 	}
 }
 

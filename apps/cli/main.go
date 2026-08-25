@@ -27,6 +27,10 @@ var version = "development"
 // richer form, so main only has to set the exit code.
 var errAlreadyReported = errors.New("already reported")
 
+// errAborted means the user dismissed a prompt, which is a choice rather than a
+// failure worth an error message.
+var errAborted = errors.New("aborted")
+
 func banner() string {
 	return fmt.Sprintf("Notification CLI v%s - (C) Luc Vo Van, 2026 - Built with AI", version)
 }
@@ -35,23 +39,30 @@ func usage() {
 	fmt.Println(banner())
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  notify <message>")
-	fmt.Println("  notify --configure")
+	fmt.Println("  notify <message>       Send a notification")
+	fmt.Println("  notify --configure     Ask for the service URL and API key, test them, and save")
 	fmt.Println("  notify --version")
 }
 
-// configure tests the endpoint with the connection details taken from the
-// environment, reports the outcome, and only saves the configuration once the
-// test has passed.
+// configure asks for the connection details, tests them, reports the outcome,
+// and only saves once the test has passed. The saved file is the sole source of
+// these settings; nothing is read from the environment.
 func configure() error {
-	apiURL := strings.TrimSpace(os.Getenv(apiURLEnvironmentVariable))
-	apiKey := os.Getenv(apiKeyEnvironmentVariable)
-	if apiURL == "" || apiKey == "" {
-		return configurationInstructions()
-	}
-	config, err := validateConfiguration(configuration{APIURL: apiURL, APIKey: apiKey})
+	path, err := configurationPath()
 	if err != nil {
-		return fmt.Errorf("invalid configuration: %w", err)
+		return err
+	}
+	// A previous configuration only seeds the URL prompt; a bad one must not
+	// stop the user from replacing it.
+	current, _ := loadConfiguration(path)
+
+	prompts, err := consolePrompter()
+	if err != nil {
+		return err
+	}
+	config, err := prompts.promptedConfiguration(current)
+	if err != nil {
+		return err
 	}
 
 	fmt.Printf("Testing %s\n", verificationEndpoint(config.APIURL))
@@ -72,14 +83,21 @@ func configure() error {
 		fmt.Printf("Account: %s\n", email)
 	}
 
-	path, err := configurationPath()
-	if err != nil {
-		return err
-	}
 	if err := saveConfiguration(config, path); err != nil {
 		return err
 	}
 	fmt.Printf("Saved:   %s\n", path)
+
+	// MCP clients read the settings from the environment because they have no
+	// configuration file of their own. Publishing them is a convenience, so a
+	// failure is a warning rather than the end of a working configuration.
+	location, err := publishEnvironment(config)
+	if err != nil {
+		fmt.Printf("Export:  FAILED (%s)\n", err)
+		return nil
+	}
+	fmt.Printf("Export:  %s and %s -> %s\n",
+		apiURLEnvironmentVariable, apiKeyEnvironmentVariable, location)
 	return nil
 }
 
@@ -240,10 +258,15 @@ func run(arguments []string) error {
 }
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		if !errors.Is(err, errAlreadyReported) {
-			fmt.Fprintf(os.Stderr, "notify: %s\n", err)
-		}
-		os.Exit(1)
+	err := run(os.Args[1:])
+	switch {
+	case err == nil:
+		return
+	case errors.Is(err, errAborted):
+		fmt.Fprintln(os.Stderr, "notify: cancelled.")
+	case errors.Is(err, errAlreadyReported):
+	default:
+		fmt.Fprintf(os.Stderr, "notify: %s\n", err)
 	}
+	os.Exit(1)
 }

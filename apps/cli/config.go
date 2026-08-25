@@ -12,10 +12,7 @@ import (
 	"strings"
 )
 
-const (
-	apiURLEnvironmentVariable = "NOTIFICATION_CLI_API_URL"
-	apiKeyEnvironmentVariable = "NOTIFICATION_CLI_API_KEY"
-)
+const apiKeyPrefix = "ncli_"
 
 type configuration struct {
 	APIURL string `json:"apiUrl"`
@@ -73,6 +70,9 @@ func validateAPIKey(value string) error {
 	if strings.TrimSpace(value) == "" {
 		return errors.New("the API key cannot be empty")
 	}
+	if !strings.HasPrefix(value, apiKeyPrefix) {
+		return fmt.Errorf("the API key must start with %q; copy it from the API key section of the web app", apiKeyPrefix)
+	}
 	if len(value) > 8192 {
 		return errors.New("the API key is too long")
 	}
@@ -126,20 +126,9 @@ func saveConfiguration(config configuration, path string) error {
 	return nil
 }
 
+// loadConfiguration reads the settings written by --configure. It is the only
+// source of connection details: nothing is read from the environment.
 func loadConfiguration(path string) (configuration, error) {
-	apiURL := strings.TrimSpace(os.Getenv(apiURLEnvironmentVariable))
-	apiKey := os.Getenv(apiKeyEnvironmentVariable)
-	if apiURL != "" || apiKey != "" {
-		if apiURL == "" || apiKey == "" {
-			return configuration{}, fmt.Errorf(
-				"both %s and %s must be set",
-				apiURLEnvironmentVariable,
-				apiKeyEnvironmentVariable,
-			)
-		}
-		return validateConfiguration(configuration{APIURL: apiURL, APIKey: apiKey})
-	}
-
 	content, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return configuration{}, configurationInstructions()
@@ -160,9 +149,5 @@ func loadConfiguration(path string) (configuration, error) {
 }
 
 func configurationInstructions() error {
-	return fmt.Errorf(
-		"Notification CLI is not configured; set %s and %s in your environment, then run \"notify --configure\"",
-		apiURLEnvironmentVariable,
-		apiKeyEnvironmentVariable,
-	)
+	return errors.New("Notification CLI is not configured; run \"notify --configure\"")
 }

@@ -53,3 +53,15 @@ test("the workflow ships an executable and an installer per architecture", async
   // A stray cabinet means the embedded payload regressed.
   assert.match(workflow, /unexpected external cabinet/);
 });
+
+test("the workflow ships a universal macOS package", async () => {
+  const workflow = await readFile(workflowPath, "utf8");
+
+  assert.match(workflow, /runs-on: macos-latest/);
+  // One universal binary rather than one download per Mac architecture.
+  assert.match(workflow, /lipo -create -output/);
+  // /usr/local/bin is on the default PATH, which is what makes this the
+  // equivalent of the MSI's PATH entry.
+  assert.match(workflow, /--install-location \/usr\/local\/bin/);
+  assert.ok(workflow.includes("artifacts/NotificationCLI-macos.pkg"));
+});
