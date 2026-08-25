@@ -34,6 +34,10 @@ on:
         description: "Optional custom domain. Its DNS record must already point at the Static Web App."
         type: string
         default: ""
+      deploy_app_service:
+        description: "Also deploy the App Service host (B1, billed hourly) that runs the OAuth authorization server."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -79,6 +83,10 @@ jobs:
           VAPID_SUBJECT: ${{ vars.VAPID_SUBJECT }}
           AUTHORIZED_USERS: ${{ vars.AUTHORIZED_USERS }}
           RETENTION_DAYS: ${{ vars.NOTIFICATION_CLI_RETENTION_DAYS || '7' }}
+          ENTRA_TENANT_ID: ${{ vars.ENTRA_TENANT_ID }}
+          ENTRA_CLIENT_ID: ${{ vars.ENTRA_CLIENT_ID }}
+          ENTRA_CLIENT_SECRET: ${{ secrets.ENTRA_CLIENT_SECRET }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
         run: |
           az deployment group what-if \
             --resource-group "${{ inputs.resource_group }}" \
@@ -91,7 +99,12 @@ jobs:
               vapidPublicKey="$VAPID_PUBLIC_KEY" \
               vapidPrivateKey="$VAPID_PRIVATE_KEY" \
               vapidSubject="$VAPID_SUBJECT" \
-              retentionDays="$RETENTION_DAYS"
+              retentionDays="$RETENTION_DAYS" \
+              deployAppService="${{ inputs.deploy_app_service }}" \
+              entraTenantId="$ENTRA_TENANT_ID" \
+              entraClientId="$ENTRA_CLIENT_ID" \
+              entraClientSecret="$ENTRA_CLIENT_SECRET" \
+              sessionSecret="$SESSION_SECRET"
 
       - name: Deploy infrastructure
         id: deploy
@@ -102,6 +115,10 @@ jobs:
           VAPID_SUBJECT: ${{ vars.VAPID_SUBJECT }}
           AUTHORIZED_USERS: ${{ vars.AUTHORIZED_USERS }}
           RETENTION_DAYS: ${{ vars.NOTIFICATION_CLI_RETENTION_DAYS || '7' }}
+          ENTRA_TENANT_ID: ${{ vars.ENTRA_TENANT_ID }}
+          ENTRA_CLIENT_ID: ${{ vars.ENTRA_CLIENT_ID }}
+          ENTRA_CLIENT_SECRET: ${{ secrets.ENTRA_CLIENT_SECRET }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
         run: |
           outputs=$(az deployment group create \
             --name "notification-cli-${{ github.run_id }}" \
@@ -116,11 +133,18 @@ jobs:
               vapidPrivateKey="$VAPID_PRIVATE_KEY" \
               vapidSubject="$VAPID_SUBJECT" \
               retentionDays="$RETENTION_DAYS" \
+              deployAppService="${{ inputs.deploy_app_service }}" \
+              entraTenantId="$ENTRA_TENANT_ID" \
+              entraClientId="$ENTRA_CLIENT_ID" \
+              entraClientSecret="$ENTRA_CLIENT_SECRET" \
+              sessionSecret="$SESSION_SECRET" \
             --query properties.outputs \
             --output json)
           echo "hostname=$(echo "$outputs" | jq -r .staticWebAppHostname.value)" >> "$GITHUB_OUTPUT"
           echo "swa_name=$(echo "$outputs" | jq -r .staticWebAppName.value)" >> "$GITHUB_OUTPUT"
           echo "push_configured=$(echo "$outputs" | jq -r .pushConfigured.value)" >> "$GITHUB_OUTPUT"
+          echo "app_name=$(echo "$outputs" | jq -r .appServiceName.value)" >> "$GITHUB_OUTPUT"
+          echo "app_hostname=$(echo "$outputs" | jq -r .appServiceHostname.value)" >> "$GITHUB_OUTPUT"
 
       # The deployment token is deliberately not printed. Read it separately and
       # store it as the AZURE_STATIC_WEB_APPS_API_TOKEN secret.
@@ -130,6 +154,8 @@ jobs:
           HOSTNAME: ${{ steps.deploy.outputs.hostname }}
           SWA_NAME: ${{ steps.deploy.outputs.swa_name }}
           PUSH_CONFIGURED: ${{ steps.deploy.outputs.push_configured }}
+          APP_NAME: ${{ steps.deploy.outputs.app_name }}
+          APP_HOSTNAME: ${{ steps.deploy.outputs.app_hostname }}
         run: |
           {
             echo "## Infrastructure deployed"
@@ -137,6 +163,11 @@ jobs:
             echo "- Static Web App: \`$SWA_NAME\`"
             echo "- Hostname: https://$HOSTNAME"
             echo "- Web Push configured: \`$PUSH_CONFIGURED\`"
+            if [ -n "$APP_NAME" ]; then
+              echo "- App Service: \`$APP_NAME\` (https://$APP_HOSTNAME)"
+              echo ""
+              echo "Set the AZURE_APP_SERVICE_NAME variable to \`$APP_NAME\` and store its publish profile as AZURE_APP_SERVICE_PUBLISH_PROFILE."
+            fi
             echo ""
             echo "Refresh the deployment token secret, then run the deploy workflow:"
             echo ""

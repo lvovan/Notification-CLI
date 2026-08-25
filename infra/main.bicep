@@ -54,6 +54,23 @@ param retentionDays int = 7
 @description('Optional custom domain, for example "notify.example.com". The DNS record must already point at the Static Web App, otherwise validation blocks the deployment. Leave empty to use the generated azurestaticapps.net hostname.')
 param customDomain string = ''
 
+@description('Deploy the App Service host alongside the Static Web App. It serves the same frontend and API, and additionally hosts the OAuth authorization server that MCP clients need.')
+param deployAppService bool = false
+
+@description('Directory (tenant) ID of the Entra application the App Service host signs users in with.')
+param entraTenantId string = ''
+
+@description('Application (client) ID of that Entra application.')
+param entraClientId string = ''
+
+@description('Client secret of that Entra application.')
+@secure()
+param entraClientSecret string = ''
+
+@description('Key used to sign the App Service session cookie. Changing it signs every browser out.')
+@secure()
+param sessionSecret string = ''
+
 // Storage account names are globally unique, lower-case, alphanumeric and at
 // most 24 characters, so they cannot simply reuse the prefix.
 var storageAccountName = take(
@@ -62,6 +79,8 @@ var storageAccountName = take(
 )
 var webPubSubName = '${namePrefix}-wps'
 var staticWebAppName = '${namePrefix}-swa'
+var appServicePlanName = '${namePrefix}-plan'
+var appServiceName = '${namePrefix}-app'
 
 // Table names are fixed by the API. Creating them here makes a fresh
 // deployment immediately consistent, even though the API also creates them on
@@ -71,6 +90,7 @@ var tableNames = [
   'NotificationMetrics'
   'NotificationHistory'
   'ApiKeys'
+  'NotificationOAuth'
 ]
 
 var pushConfigured = !empty(vapidPublicKey)
@@ -139,27 +159,52 @@ resource staticWebApp 'Microsoft.Web/staticSites@2024-11-01' = {
   }
 }
 
+// Every setting both hosts need. The App Service host adds the sign-in and
+// session settings on top, because it authenticates users itself.
+var sharedSettings = concat(
+  [
+    {
+      name: 'NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING'
+      value: webPubSub.listKeys().primaryConnectionString
+    }
+    {
+      name: 'NOTIFICATION_CLI_STORAGE_CONNECTION_STRING'
+      value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};AccountKey=${storageAccount.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
+    }
+    {
+      name: 'NOTIFICATION_CLI_RETENTION_DAYS'
+      value: string(retentionDays)
+    }
+    {
+      name: 'AUTHORIZED_USERS'
+      value: authorizedUsers
+    }
+  ],
+  pushConfigured
+    ? [
+        {
+          name: 'NOTIFICATION_CLI_VAPID_PUBLIC_KEY'
+          value: vapidPublicKey
+        }
+        {
+          name: 'NOTIFICATION_CLI_VAPID_PRIVATE_KEY'
+          value: vapidPrivateKey
+        }
+        {
+          name: 'NOTIFICATION_CLI_VAPID_SUBJECT'
+          value: vapidSubject
+        }
+      ]
+    : []
+)
+
 // Replaces the complete application settings collection on every deployment,
 // so any setting added by hand in the portal is removed. Add new settings
 // here instead.
 resource staticWebAppSettings 'Microsoft.Web/staticSites/config@2024-11-01' = {
   parent: staticWebApp
   name: 'appsettings'
-  properties: union(
-    {
-      NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING: webPubSub.listKeys().primaryConnectionString
-      NOTIFICATION_CLI_STORAGE_CONNECTION_STRING: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};AccountKey=${storageAccount.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
-      NOTIFICATION_CLI_RETENTION_DAYS: string(retentionDays)
-      AUTHORIZED_USERS: authorizedUsers
-    },
-    pushConfigured
-      ? {
-          NOTIFICATION_CLI_VAPID_PUBLIC_KEY: vapidPublicKey
-          NOTIFICATION_CLI_VAPID_PRIVATE_KEY: vapidPrivateKey
-          NOTIFICATION_CLI_VAPID_SUBJECT: vapidSubject
-        }
-      : {}
-  )
+  properties: toObject(sharedSettings, setting => setting.name, setting => setting.value)
 }
 
 // Validation polls DNS, so an unresolvable record leaves the deployment
@@ -167,6 +212,73 @@ resource staticWebAppSettings 'Microsoft.Web/staticSites/config@2024-11-01' = {
 resource domain 'Microsoft.Web/staticSites/customDomains@2024-11-01' = if (!empty(customDomain)) {
   parent: staticWebApp
   name: customDomain
+}
+
+/*
+  The App Service host.
+
+  It exists because the Model Context Protocol requires clients to present
+  `Authorization: Bearer <token>`, and Static Web Apps replaces that header
+  with its own platform token before a managed function is invoked. OAuth can
+  therefore never work behind the Static Web App, whatever the API does.
+
+  B1 is the smallest tier that supports Always On and a free managed
+  certificate, both of which this host needs.
+*/
+resource appServicePlan 'Microsoft.Web/serverfarms@2024-11-01' = if (deployAppService) {
+  name: appServicePlanName
+  location: location
+  sku: {
+    name: 'B1'
+    tier: 'Basic'
+    capacity: 1
+  }
+  kind: 'linux'
+  properties: {
+    reserved: true
+  }
+}
+
+resource appService 'Microsoft.Web/sites@2024-11-01' = if (deployAppService) {
+  name: appServiceName
+  location: location
+  kind: 'app,linux'
+  properties: {
+    serverFarmId: appServicePlan.id
+    httpsOnly: true
+    siteConfig: {
+      linuxFxVersion: 'NODE|22-lts'
+      // The deployed package is an already-bundled single file.
+      appCommandLine: 'node dist/main.js'
+      alwaysOn: true
+      ftpsState: 'Disabled'
+      http20Enabled: true
+      minTlsVersion: '1.2'
+      appSettings: concat(sharedSettings, [
+        {
+          name: 'NOTIFICATION_CLI_ENTRA_TENANT_ID'
+          value: entraTenantId
+        }
+        {
+          name: 'NOTIFICATION_CLI_ENTRA_CLIENT_ID'
+          value: entraClientId
+        }
+        {
+          name: 'NOTIFICATION_CLI_ENTRA_CLIENT_SECRET'
+          value: entraClientSecret
+        }
+        {
+          name: 'NOTIFICATION_CLI_SESSION_SECRET'
+          value: sessionSecret
+        }
+        {
+          // The package ships already bundled, so Oryx has nothing to build.
+          name: 'SCM_DO_BUILD_DURING_DEPLOYMENT'
+          value: 'false'
+        }
+      ])
+    }
+  }
 }
 
 @description('Name of the Static Web App, needed to read its deployment token.')
@@ -183,3 +295,9 @@ output storageAccountName string = storageAccount.name
 
 @description('Whether Web Push settings were supplied. When false, notifications only reach open browser tabs.')
 output pushConfigured bool = pushConfigured
+
+@description('Name of the App Service host, empty when it was not deployed.')
+output appServiceName string = deployAppService ? appServiceName : ''
+
+@description('Hostname of the App Service host, empty when it was not deployed. This is the origin MCP clients discover the authorization server on.')
+output appServiceHostname string = deployAppService ? appService!.properties.defaultHostName : ''

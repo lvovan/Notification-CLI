@@ -2,14 +2,18 @@
 
 Notification CLI publishes messages through Azure Web PubSub. Its companion
 Azure Static Web App receives messages in real time and can display browser
-notifications. The app also hosts a key-protected MCP tool so GitHub Copilot
-can ask you to return when a task needs attention.
+notifications. The app also hosts an MCP tool so GitHub Copilot can ask you
+to return when a task needs attention.
 
 The design works with the free tiers of Azure Web PubSub and Azure Static Web
 Apps. Azure Table Storage keeps browser push subscriptions, and VAPID Web Push
-wakes subscribed devices even when the PWA is closed. Secrets are used only by
-the Go CLI and server-side Azure Functions; they are never shipped to the
-browser.
+wakes subscribed devices even when the PWA is closed. Secrets stay server-side;
+they are never shipped to the browser.
+
+The application runs on either of two interchangeable hosts: the free Static
+Web App, or an App Service that additionally acts as an OAuth authorization
+server, so MCP clients can authenticate without a copied secret. See
+[Hosting](#hosting).
 
 The app is multi-user. Every authorized Microsoft account has its own
 notifications, history, metrics and API key, and no account can ever see
@@ -23,7 +27,8 @@ opens the web app and is managed from the API key section of the frontend.
 | `apps/cli` | Go | Sends notifications through the secured SWA fan-out API |
 | `apps/web` | TypeScript and Vite | Installable PWA with live and background notifications |
 | `apps/api` | TypeScript and Azure Functions | Authenticates users, stores subscriptions, fans out messages, and hosts MCP |
-| `infra` | Bicep | Declares the Azure resources and the Static Web App settings |
+| `apps/server` | TypeScript and Node.js | App Service host: serves the frontend, the same API, and the OAuth authorization server |
+| `infra` | Bicep | Declares the Azure resources and both hosts' settings |
 | `installer` | WiX Toolset | Builds the Windows x64 and ARM64 MSIs |
 
 All senders and receivers use the Web PubSub hub named `notifications`.
@@ -32,6 +37,88 @@ All senders and receivers use the Web PubSub hub named `notifications`.
 > connections in total. With the multi-user model this budget is shared across
 > all users rather than one, and each open browser tab and installed PWA holds
 > one connection.
+
+## Hosting
+
+The same application runs on two interchangeable hosts. Both serve the same
+frontend and the same API, from the same Web PubSub instance and the same
+storage account, so a user's notifications, history, metrics and API key are
+identical whichever host they reach.
+
+| | Static Web App (Free) | App Service (B1) |
+| --- | --- | --- |
+| Cost | Free | Billed hourly |
+| Sign-in | Built-in Entra provider | Implemented in `apps/server` |
+| API key authentication | Yes | Yes |
+| OAuth for MCP clients | **No** | **Yes** |
+
+The split exists for one reason: the Model Context Protocol requires clients to
+present `Authorization: Bearer <token>`, and Static Web Apps replaces that
+header with its own platform token before a managed function is invoked. No API
+change can work around it. The App Service host terminates requests itself, so
+the header arrives intact and the OAuth authorization server described below
+becomes possible.
+
+The API is defined once, in `packages/core`, as a table of routes. Each host is
+a thin adapter over that table, so the two cannot drift apart.
+
+### Deploy the App Service host
+
+1. **Register an Entra application** — this cannot be expressed in Bicep.
+
+   ```powershell
+   az ad app create --display-name "Notification CLI" `
+     --sign-in-audience AzureADandPersonalMicrosoftAccount `
+     --web-redirect-uris "https://<your-app-service-host>/.auth/login/aad/callback"
+   az ad app credential reset --id <app-id> --append
+   ```
+
+   Record the application ID, the tenant ID and the generated secret. Personal
+   Microsoft accounts need the multi-tenant audience above.
+
+2. **Store the deployment configuration** as repository variables
+   `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID`, and repository secrets
+   `ENTRA_CLIENT_SECRET` and `SESSION_SECRET`. The session secret signs the
+   sign-in cookie; any long random string works, and changing it signs every
+   browser out.
+
+3. **Provision** by running the infrastructure workflow with
+   *deploy_app_service* enabled.
+
+4. **Publish** by setting the repository variable `AZURE_APP_SERVICE_NAME` to
+   the site name reported by that run, and storing its publish profile as the
+   secret `AZURE_APP_SERVICE_PUBLISH_PROFILE`:
+
+   ```powershell
+   az webapp deployment list-publishing-profiles `
+     --name <site> --resource-group notification-cli --xml
+   ```
+
+   The deploy workflow skips the App Service step entirely while
+   `AZURE_APP_SERVICE_NAME` is empty.
+
+5. **Add a custom domain and certificate**, if you use one. App Service issues
+   a free managed certificate on B1, but only after the hostname is bound:
+
+   ```powershell
+   az webapp config hostname add --webapp-name <site> `
+     --resource-group notification-cli --hostname <notify.example.com>
+   az webapp config ssl create --resource-group notification-cli `
+     --name <site> --hostname <notify.example.com>
+   az webapp config ssl bind --resource-group notification-cli `
+     --name <site> --certificate-thumbprint <thumbprint> --ssl-type SNI
+   ```
+
+   Add the same host to the Entra application's redirect URIs. Access tokens
+   are bound to the origin that issued them, so pick one origin and use it
+   everywhere.
+
+Do **not** enable App Service Easy Auth. It rejects any `Authorization` bearer
+it cannot validate with a `401`, even on excluded paths, which would break MCP
+before the application ever sees the request. Sign-in is implemented in
+`apps/server` for exactly that reason, and it re-encodes the signed-in identity
+into the same `x-ms-client-principal` header Static Web Apps injects, so the
+API and the frontend cannot tell the two hosts apart.
 
 ## Prerequisites
 
@@ -154,18 +241,31 @@ pnpm package
 pnpm smoke:package
 ```
 
-Deployable frontend and API artifacts are written to `dist\web` and
-`dist\api`. The deployed `staticwebapp.config.json` declares the prebuilt
-Functions runtime as `node:22`, which is required when `skip_api_build` is
-enabled.
+Deployable artifacts are written to `dist`: `dist\web` and `dist\api` for the
+Static Web App, and `dist\server` for the App Service host. The deployed
+`staticwebapp.config.json` declares the prebuilt Functions runtime as
+`node:22`, which is required when `skip_api_build` is enabled.
+
+To run the App Service host locally, serve `dist\server` with the four sign-in
+settings from the hosting section in the environment:
+
+```powershell
+cd dist\server
+$env:NOTIFICATION_CLI_ENTRA_TENANT_ID = "<tenant>"
+$env:NOTIFICATION_CLI_ENTRA_CLIENT_ID = "<client>"
+$env:NOTIFICATION_CLI_ENTRA_CLIENT_SECRET = "<secret>"
+$env:NOTIFICATION_CLI_SESSION_SECRET = "<random>"
+node dist\main.js
+```
 
 ## Provision Azure resources
 
 `infra\main.bicep` declares the whole solution on free tiers: a Web PubSub
-instance (`Free_F1`), a `Standard_LRS` storage account with the four tables,
-and a Free-tier Static Web App. It also writes the Static Web App's
-environment variables, deriving the Web PubSub and storage connection strings
-from the resources it just created, so neither is ever copied by hand.
+instance (`Free_F1`), a `Standard_LRS` storage account with the five tables,
+and a Free-tier Static Web App. It optionally adds the B1 App Service host as
+well. It also writes both hosts' application settings, deriving the Web PubSub
+and storage connection strings from the resources it just created, so neither
+is ever copied by hand.
 
 The template does not deploy application code. Provision first, then run the
 deploy workflow.
@@ -229,9 +329,10 @@ the template instead.
 
 ## Configure Azure
 
-The Bicep template above sets every value in this table. Use the Static Web
-App's **Environment variables** blade to inspect them, or to configure a
-manually created instance:
+The Bicep template above sets every value in this table on both hosts. Use the
+Static Web App's **Environment variables** blade or the App Service's
+**Environment variables** blade to inspect them, or to configure a manually
+created instance:
 
 | Variable | Purpose |
 | --- | --- |
@@ -242,6 +343,11 @@ manually created instance:
 | `NOTIFICATION_CLI_VAPID_SUBJECT` | Push only. VAPID contact URI, normally `mailto:you@example.com` |
 | `NOTIFICATION_CLI_STORAGE_CONNECTION_STRING` | Azure Storage connection string used for durable push subscriptions, per-user API keys, notification history and metrics |
 | `NOTIFICATION_CLI_RETENTION_DAYS` | Optional. Whole number of days notifications stay readable in the frontend. Defaults to `7`, maximum `365` |
+| `NOTIFICATION_CLI_ENTRA_TENANT_ID` | App Service only. Directory of the Entra application used to sign users in |
+| `NOTIFICATION_CLI_ENTRA_CLIENT_ID` | App Service only. Application ID of that registration |
+| `NOTIFICATION_CLI_ENTRA_CLIENT_SECRET` | App Service only. Client secret of that registration |
+| `NOTIFICATION_CLI_SESSION_SECRET` | App Service only. Signs the session cookie. Changing it signs every browser out |
+| `NOTIFICATION_CLI_WEB_ROOT` | App Service only. Optional path to the frontend files. Defaults to `web` next to the bundle |
 
 Real-time delivery through Web PubSub is the required core transport. The
 "push only" settings are an optional enhancement: when any of them is missing,
@@ -265,8 +371,10 @@ Storage connection string remain server-side.
 The Static Web App uses its Free-tier-compatible built-in Microsoft Entra ID
 provider to gate only the PWA frontend. Visiting the page redirects to
 `/.auth/login/aad`; no custom identity provider registration or paid role
-management is required. All `/api/*` routes remain anonymous at the Static Web
-Apps routing layer and enforce their own security: `/api/notify` and `/api/mcp`
+management is required. The App Service host implements the same three routes
+itself and produces the same `x-ms-client-principal` header, so everything
+below applies identically to both. All `/api/*` routes remain anonymous at the
+routing layer and enforce their own security: `/api/notify` and `/api/mcp`
 resolve the presented `x-api-key` to the account that owns it and re-check that
 account against the allowlist on every call, while browser session,
 negotiation, and push-subscription handlers validate the signed-in principal
@@ -419,11 +527,64 @@ shadow a freshly deployed one.
 The MCP endpoint is:
 
 ```text
-https://<your-static-web-app>.azurestaticapps.net/api/mcp
+https://<your-host>/api/mcp
 ```
 
-It authenticates with your personal API key, the same key the CLI uses. Any of
-these three headers carries it, and they are equivalent:
+It accepts two credentials, and prefers the first:
+
+1. **An OAuth 2.1 access token.** The App Service host runs a full
+   authorization server, so a compliant MCP client discovers it, registers
+   itself, sends you to Microsoft to sign in, and obtains a token without you
+   ever copying a secret.
+2. **Your personal API key**, for clients that do not implement OAuth.
+
+### OAuth (default)
+
+Point the client at the endpoint with no credentials at all:
+
+```json
+{
+  "servers": {
+    "notification-cli": {
+      "type": "http",
+      "url": "https://<your-app-service-host>/api/mcp"
+    }
+  }
+}
+```
+
+The unauthenticated request answers `401` with an RFC 9728 challenge naming
+the metadata document, and the flow proceeds from there:
+
+| Step | Endpoint |
+| --- | --- |
+| Protected resource metadata | `/.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/api/mcp` |
+| Authorization server metadata | `/.well-known/oauth-authorization-server` |
+| Dynamic client registration | `POST /oauth/register` |
+| Authorization and consent | `/oauth/authorize` |
+| Token and refresh | `POST /oauth/token` |
+| Signing keys | `/oauth/jwks` |
+
+Registration is open, because MCP clients cannot be enrolled in advance. It
+grants nothing on its own: a token is only ever issued after you sign in with
+your Microsoft account and approve the consent page, and only if your account
+is listed in `AUTHORIZED_USERS`. PKCE (S256) is required, authorization codes
+live 60 seconds and are single-use, access tokens live one hour, and refresh
+tokens rotate on every use.
+
+Tokens are ES256-signed and bound to the deployment that issued them: the
+`issuer`, the `mcp` scope and the audience `https://<your-host>/api/mcp` are
+all revalidated on every request, so a token minted by another instance is
+worthless here.
+
+**OAuth requires the App Service host.** Static Web Apps replaces the
+`Authorization` header with its own platform token before a managed function
+runs, so bearer tokens can never reach the API there — which is exactly why the
+App Service host exists.
+
+### API key (fallback)
+
+Any of these three headers carries the key, and they are equivalent:
 
 ```text
 x-api-key: <key>
@@ -431,18 +592,16 @@ x-authorization: Bearer <key>
 Authorization: Bearer <key>
 ```
 
-Prefer one of the first two. **Azure Static Web Apps replaces the
-`Authorization` header with its own platform token before a managed function
-sees it**, so a key sent that way never arrives and the server answers `401` —
-that is a property of the hosting platform, not of this API, and it is why
-`x-authorization` exists. Use it for any client that insists on a
-`Bearer` token; the value and the scheme are identical, only the header name
-differs. `x-api-key` wins if more than one is present.
+Keys are prefixed `ncli_`, which is what lets one `Authorization` header carry
+either credential: a bearer value starting with `ncli_` is treated as a key,
+anything else as a token. On the Static Web App host, use `x-api-key` or
+`x-authorization`, since `Authorization` is consumed by the platform.
+`x-api-key` wins if more than one is present.
 
-Copy the key from the API key section of the web app. If you cycle the key
-there, update every MCP client that used it. The two MCP clients differ in how
-they supply that secret, so use the matching example below.
-### VS Code
+Copy the key from the API key section of the web app. If you cycle it there,
+update every MCP client that used it.
+
+#### VS Code
 
 VS Code resolves `${input:...}` placeholders and prompts once per workspace,
 storing the answer in its secret storage. Add to `.vscode/mcp.json`:
@@ -452,7 +611,7 @@ storing the answer in its secret storage. Add to `.vscode/mcp.json`:
   "servers": {
     "notification-cli": {
       "type": "http",
-      "url": "https://<your-static-web-app>.azurestaticapps.net/api/mcp",
+      "url": "https://<your-host>/api/mcp",
       "headers": {
         "x-api-key": "${input:notification-cli-api-key}"
       }
@@ -469,7 +628,7 @@ storing the answer in its secret storage. Add to `.vscode/mcp.json`:
 }
 ```
 
-### GitHub Copilot CLI
+#### GitHub Copilot CLI
 
 The Copilot CLI does not support `inputs`. It expands `${VARNAME}` (and
 `$VARNAME`) in header values from the environment that launched `copilot`.
@@ -483,7 +642,7 @@ verbatim, which the server rejects with `401`. Add to
     "notification-cli": {
       "type": "http",
       "tools": ["*"],
-      "url": "https://<your-static-web-app>.azurestaticapps.net/api/mcp",
+      "url": "https://<your-host>/api/mcp",
       "headers": {
         "x-api-key": "${NOTIFICATION_CLI_API_KEY}"
       }
@@ -504,38 +663,31 @@ need to restart the terminal that launches `copilot`. To set it by hand:
   "NOTIFICATION_CLI_API_KEY", "<key>", "User")
 ```
 
-A client that insists on a Bearer token works just as well, as long as it can
-name the header — remember that `Authorization` itself is consumed by Static
-Web Apps:
-
-```json
-"headers": {
-  "x-authorization": "Bearer ${NOTIFICATION_CLI_API_KEY}"
-}
-```
-
 The server implements stateless Streamable HTTP JSON-RPC and exposes
 `send_notification`. The tool accepts a required `message` string of up to
 1,000 characters.
 
 ### Troubleshooting
 
-`Authentication failed: MCPOAuthError` means the client received a `401` and
-fell back to OAuth. This server uses no OAuth, so the real cause is a missing
-or unexpanded key header — check the placeholder syntax and that the variable
-is set in the shell that started the client.
+`Authentication failed: MCPOAuthError` against the **Static Web App** host
+means the client tried OAuth, which that host cannot support. Either move to
+the App Service host or supply the key in `x-api-key`.
 
-MCP clients probe `/.well-known/oauth-authorization-server/...` and
-`/.well-known/oauth-protected-resource/...` before falling back to static
-credentials. This server does not use OAuth, so those paths are routed to a
-plain `404`. They must never reach the authenticated catch-all route, which
-would answer with a redirect to the Microsoft sign-in page and fail the client
-with `OAuth discovery failed: Failed to parse discovery document`.
+The same error against the **App Service** host means discovery or the token
+exchange failed. Check that the client reached
+`/.well-known/oauth-protected-resource` and that the origin it discovered
+matches the one it calls: tokens are bound to the issuing origin, so mixing the
+generated hostname and a custom domain rejects every token.
+
+On the Static Web App host the `/.well-known/*` paths are deliberately routed
+to a plain `404`. They must never reach the authenticated catch-all route,
+which would answer with a redirect to the Microsoft sign-in page and fail the
+client with `OAuth discovery failed: Failed to parse discovery document`.
 
 Verify the endpoint without sending a notification:
 
 ```powershell
-curl.exe -s -X POST https://<your-static-web-app>/api/mcp `
+curl.exe -s -X POST https://<your-host>/api/mcp `
   -H "x-api-key: $env:NOTIFICATION_CLI_API_KEY" `
   -H "Content-Type: application/json" `
   -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}'
@@ -614,6 +766,11 @@ installer, checks and packages the web application, and deploys the frontend
 and API. Unlike the infrastructure workflow it also runs on every push to
 `main`.
 
+The same run publishes the App Service host once the `AZURE_APP_SERVICE_NAME`
+variable and `AZURE_APP_SERVICE_PUBLISH_PROFILE` secret exist; the step is
+skipped while the variable is empty. Both hosts are therefore always deployed
+from the same commit and stay in step.
+
 ## Breaking migration for this release
 
 This release converts the app from a single shared key to per-user keys. The
@@ -642,7 +799,11 @@ settings — are obsolete and should be removed.
 
 - Never place the Web PubSub connection string in a `VITE_*` variable. Vite
   variables are embedded in browser assets.
-- Keep the VAPID private key and Azure Storage connection string server-side.
+- Keep the VAPID private key, the Entra client secret, the session secret and
+  the Azure Storage connection string server-side.
+- Prefer OAuth over the API key for MCP clients on the App Service host. An
+  access token is scoped to `mcp`, bound to this deployment, expires in an
+  hour, and never has to be pasted anywhere.
 - Treat your personal API key like a password. Cycle it from the web app's API
   key section if it is exposed; the old key stops working immediately, so
   update the CLI configuration and every MCP client that used it. Each key

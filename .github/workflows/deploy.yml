@@ -170,3 +170,14 @@ jobs:
           output_location: ""
           skip_app_build: true
           skip_api_build: true
+
+      # The App Service host serves the same frontend and the same API, plus
+      # the OAuth authorization server that MCP clients need. It is deployed
+      # only once AZURE_APP_SERVICE_NAME names a site.
+      - name: Deploy App Service
+        if: ${{ vars.AZURE_APP_SERVICE_NAME != '' }}
+        uses: Azure/webapps-deploy@02a81bead70021f5284939794bcec79c271ab383 # v3.0.8
+        with:
+          app-name: ${{ vars.AZURE_APP_SERVICE_NAME }}
+          publish-profile: ${{ secrets.AZURE_APP_SERVICE_PUBLISH_PROFILE }}
+          package: dist/server
