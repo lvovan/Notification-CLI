@@ -78,9 +78,25 @@ a thin adapter over that table, so the two cannot drift apart.
 
 2. **Store the deployment configuration** as repository variables
    `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID`, and repository secrets
-   `ENTRA_CLIENT_SECRET` and `SESSION_SECRET`. The session secret signs the
-   sign-in cookie; any long random string works, and changing it signs every
-   browser out.
+   `ENTRA_CLIENT_SECRET` and `SESSION_SECRET`.
+
+   The session secret is the HMAC key that signs the sign-in cookie and the
+   cookie carrying the OAuth `state` and PKCE verifier, so it is what stops
+   either from being forged. Generate 32 random bytes — there is nothing to
+   look up, and no format to match:
+
+   ```powershell
+   [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+   ```
+
+   ```bash
+   openssl rand -base64 32
+   ```
+
+   Use a cryptographic generator, not a passphrase or `Get-Random`: the
+   cookie's resistance to forgery is exactly the entropy of this value. Keep
+   one value per deployment — every instance of a site must share it, changing
+   it signs every browser out, and the Static Web App does not use it at all.
 
 3. **Provision** by running the infrastructure workflow with
    *deploy_app_service* enabled. It creates `<name_prefix>-wa`. Nothing can be
@@ -88,7 +104,7 @@ a thin adapter over that table, so the two cannot drift apart.
    with `Publish profile is invalid`.
 
 4. **Publish** by setting the repository variable `AZURE_APP_SERVICE_NAME` to
-   the site name reported by that run, and storing the site''s publish profile
+   the site name reported by that run, and storing the site's publish profile
    as the secret `AZURE_APP_SERVICE_PUBLISH_PROFILE`:
 
    ```powershell
@@ -107,7 +123,7 @@ a thin adapter over that table, so the two cannot drift apart.
    ```
 
    `AZURE_APP_SERVICE_NAME` must equal the `msdeploySite` attribute inside that
-   XML, which is the site''s own name without any domain suffix. The deploy
+   XML, which is the site's own name without any domain suffix. The deploy
    action reports every mismatch as `Publish profile is invalid for app-name
    and slot-name provided`, so the workflow checks the profile first and names
    the real problem.
@@ -140,7 +156,7 @@ a thin adapter over that table, so the two cannot drift apart.
 The Bicep template configures everything below. A site created in the portal
 has none of it, and shows two symptoms in turn:
 
-- **Azure''s welcome page.** The platform found no entry point. The deployed
+- **Azure's welcome page.** The platform found no entry point. The deployed
   package declares `main` and an `npm start` script, so this only happens if
   something other than `pnpm package` produced the payload. No startup command
   is needed; setting one to `node dist/main.js` also works.
@@ -155,7 +171,7 @@ has none of it, and shows two symptoms in turn:
     NOTIFICATION_CLI_ENTRA_TENANT_ID="<tenant>" `
     NOTIFICATION_CLI_ENTRA_CLIENT_ID="<client>" `
     NOTIFICATION_CLI_ENTRA_CLIENT_SECRET="<secret>" `
-    NOTIFICATION_CLI_SESSION_SECRET="<random>"
+    NOTIFICATION_CLI_SESSION_SECRET="<32 random bytes, base64>"
   ```
 
   Point the two connection strings at the **same** Web PubSub instance and
@@ -303,7 +319,7 @@ cd dist\server
 $env:NOTIFICATION_CLI_ENTRA_TENANT_ID = "<tenant>"
 $env:NOTIFICATION_CLI_ENTRA_CLIENT_ID = "<client>"
 $env:NOTIFICATION_CLI_ENTRA_CLIENT_SECRET = "<secret>"
-$env:NOTIFICATION_CLI_SESSION_SECRET = "<random>"
+$env:NOTIFICATION_CLI_SESSION_SECRET = "<32 random bytes, base64>"
 node dist\main.js
 ```
 
@@ -395,7 +411,7 @@ created instance:
 | `NOTIFICATION_CLI_ENTRA_TENANT_ID` | App Service only. Directory of the Entra application used to sign users in |
 | `NOTIFICATION_CLI_ENTRA_CLIENT_ID` | App Service only. Application ID of that registration |
 | `NOTIFICATION_CLI_ENTRA_CLIENT_SECRET` | App Service only. Client secret of that registration |
-| `NOTIFICATION_CLI_SESSION_SECRET` | App Service only. Signs the session cookie. Changing it signs every browser out |
+| `NOTIFICATION_CLI_SESSION_SECRET` | App Service only. The HMAC key signing the sign-in cookie; generate 32 random bytes as shown in [Hosting](#hosting). Changing it signs every browser out |
 | `NOTIFICATION_CLI_WEB_ROOT` | App Service only. Optional path to the frontend files. Defaults to `web` next to the bundle |
 
 Real-time delivery through Web PubSub is the required core transport. The
