@@ -64,17 +64,10 @@ a thin adapter over that table, so the two cannot drift apart.
 
 ### Deploy the App Service host
 
-1. **Register an Entra application** — this cannot be expressed in Bicep.
-
-   ```powershell
-   az ad app create --display-name "Notification CLI" `
-     --sign-in-audience AzureADandPersonalMicrosoftAccount `
-     --web-redirect-uris "https://<your-app-service-host>/.auth/login/aad/callback"
-   az ad app credential reset --id <app-id> --append
-   ```
-
-   Record the application ID, the tenant ID and the generated secret. Personal
-   Microsoft accounts need the multi-tenant audience above.
+1. **Register an Entra application** — this cannot be expressed in Bicep. See
+   [Register the Entra application](#register-the-entra-application) below for
+   the walkthrough, including which tenant value to use and why no API
+   permissions need configuring.
 
 2. **Store the deployment configuration** as repository variables
    `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID`, and repository secrets
@@ -151,6 +144,86 @@ a thin adapter over that table, so the two cannot drift apart.
    are bound to the origin that issued them, so pick one origin and use it
    everywhere.
 
+### Register the Entra application
+
+This registration authenticates **browsers only**. MCP clients never touch it:
+they obtain tokens from the authorization server this application hosts itself,
+or fall back to an API key. So the registration stays deliberately small — no
+exposed API, no app roles, no Graph permissions.
+
+1. **Create the registration.** In the portal, *Entra ID → App registrations →
+   New registration*. Name it, choose an audience from the table below, and
+   under *Redirect URI* select the **Web** platform with:
+
+   ```text
+   https://<your-app-service-host>/.auth/login/aad/callback
+   ```
+
+   That path is not Easy Auth — `apps/server` implements it and deliberately
+   mirrors the Static Web Apps URL shape. It must match byte for byte,
+   including the scheme and the absence of a trailing slash. Add one entry per
+   origin you will actually browse to: the `*.azurewebsites.net` host, your
+   custom domain, and `http://localhost:8080/...` if you run the host locally.
+
+   The CLI equivalent:
+
+   ```powershell
+   az ad app create --display-name "Notification CLI" `
+     --sign-in-audience AzureADandPersonalMicrosoftAccount `
+     --web-redirect-uris "https://<your-app-service-host>/.auth/login/aad/callback"
+   ```
+
+2. **Choose the audience, then the matching tenant value.** These two must
+   agree; a mismatch is the most common cause of `AADSTS50194` or
+   `unauthorized_client` at sign-in. `NOTIFICATION_CLI_ENTRA_TENANT_ID` is used
+   verbatim as the authority segment, so it accepts the aliases as well as a
+   GUID:
+
+   | Who signs in | Sign-in audience | Tenant value |
+   | --- | --- | --- |
+   | Only your own directory | `AzureADMyOrg` | the directory (tenant) GUID |
+   | Any work or school account | `AzureADMultipleOrgs` | `organizations` |
+   | Work, school **and** personal | `AzureADandPersonalMicrosoftAccount` | `common` |
+   | Only personal accounts | `PersonalMicrosoftAccount` | `consumers` |
+
+   Personal Microsoft accounts require the multi-tenant audience — with
+   `AzureADMyOrg` and a GUID they are rejected before the consent screen. If you
+   sign in with `@outlook.com` or `@hotmail.com`, use `common`.
+
+3. **Create a client secret.** *Certificates & secrets → New client secret*.
+   Copy the **Value**, not the Secret ID; it is shown once and cannot be
+   retrieved afterwards. Note the expiry — sign-in breaks on that date with a
+   `502` from the callback, and the fix is to issue a new secret and update
+   `NOTIFICATION_CLI_ENTRA_CLIENT_SECRET`.
+
+   ```powershell
+   az ad app credential reset --id <app-id> --append --years 2
+   ```
+
+4. **Leave API permissions alone.** The sign-in requests `openid profile email`
+   and nothing else. These are OpenID Connect scopes, granted by the identity
+   platform itself rather than by Microsoft Graph, so the default *User.Read*
+   entry the portal adds is unnecessary and can be removed. There is nothing to
+   grant admin consent for, which is what keeps this workable on a personal
+   tenant.
+
+   The application reads exactly one thing from the resulting ID token: the
+   address, taken from `email`, then `preferred_username`, then `upn`. It never
+   calls Graph and never stores a token.
+
+5. **Make sure an address comes back.** A work account whose *mail* attribute
+   is unset yields no `email` claim; the `preferred_username` fallback normally
+   covers it. If sign-in fails with `Entra ID did not return an email address`,
+   add `email` under *Token configuration → Add optional claim → ID*.
+
+6. **Record the three values** — application (client) ID, the tenant value from
+   the table, and the secret — and set them as
+   `NOTIFICATION_CLI_ENTRA_CLIENT_ID`, `NOTIFICATION_CLI_ENTRA_TENANT_ID` and
+   `NOTIFICATION_CLI_ENTRA_CLIENT_SECRET`.
+
+Authenticating is not the same as being allowed in. Anyone in the chosen
+audience can complete sign-in; `AUTHORIZED_USERS` decides who the application
+then serves, and it is checked on every request rather than only at sign-in.
 ### If you created the site by hand
 
 The Bicep template configures everything below. A site created in the portal
