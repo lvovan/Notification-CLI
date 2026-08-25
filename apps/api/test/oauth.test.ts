@@ -556,3 +556,17 @@ test("discovery follows the forwarded host rather than the internal one", async 
     "https://notify.example.com/api/mcp",
   );
 });
+
+
+// Static Web Apps announces the public URL this way rather than through
+// x-forwarded-host.
+test("discovery follows the Static Web Apps original URL", () => {
+  const proxied = {
+    url: "https://internal.azurewebsites.net/api/mcp",
+    headers: new Headers({
+      "x-ms-original-url": "https://notify.example.com/api/mcp",
+    }),
+  };
+
+  assert.equal(requestOrigin(proxied), "https://notify.example.com");
+});

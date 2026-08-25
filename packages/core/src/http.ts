@@ -48,11 +48,20 @@ export interface CoreLogger {
  *
  * Behind Static Web Apps the request URL carries the internal Functions
  * hostname, so anything a client is expected to call back on — the OAuth
- * metadata, the token audience — has to come from the forwarded headers
- * instead. `apps/server` builds the URL from those same headers already, so
- * this agrees with it.
+ * metadata, the token audience — has to come from the headers the proxy adds
+ * instead. `x-ms-original-url` is the Static Web Apps one; `x-forwarded-host`
+ * covers every other reverse proxy. `apps/server` builds the URL from those
+ * same headers already, so this agrees with it.
  */
 export function requestOrigin(request: Pick<CoreRequest, "url" | "headers">): string {
+  const original = first(request.headers.get("x-ms-original-url"));
+  if (original !== null) {
+    try {
+      return new URL(original).origin;
+    } catch {
+      // Fall through to the remaining sources.
+    }
+  }
   const host = first(request.headers.get("x-forwarded-host"));
   if (host === null) {
     return new URL(request.url).origin;
