@@ -1,0 +1,18 @@
+{
+  "name": "@notification-cli/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@notification-cli/core": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}

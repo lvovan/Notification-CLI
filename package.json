@@ -3,9 +3,9 @@
   "private": true,
   "packageManager": "pnpm@10.34.5",
   "scripts": {
-    "build": "pnpm --filter @notification-cli/api build && pnpm --filter @notification-cli/web build",
-    "check": "pnpm --filter @notification-cli/api check && pnpm --filter @notification-cli/web check",
-    "test": "pnpm --filter @notification-cli/api test",
+    "build": "pnpm --filter @notification-cli/api build && pnpm --filter @notification-cli/server build && pnpm --filter @notification-cli/web build",
+    "check": "pnpm --filter @notification-cli/core check && pnpm --filter @notification-cli/api check && pnpm --filter @notification-cli/server check && pnpm --filter @notification-cli/web check",
+    "test": "pnpm --filter @notification-cli/api test && pnpm --filter @notification-cli/server test",
     "package": "node scripts/package.mjs",
     "smoke:package": "node scripts/smoke-package.mjs"
   },
