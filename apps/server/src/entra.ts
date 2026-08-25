@@ -238,6 +238,21 @@ export interface AuthClient {
 
 const SCOPES = ["openid", "profile", "email"];
 
+/**
+ * What to do about a rejection, for the failures whose remedy is a fixed,
+ * knowable change to the registration rather than something only the operator
+ * can work out.
+ */
+function remediation(message: string): { remedy?: string } {
+  if (message.includes("AADSTS7000218")) {
+    return {
+      remedy:
+        "This application sends no client credential, so its registration must be a public client. In Entra ID, move the redirect URI to the 'Mobile and desktop applications' platform and set 'Allow public client flows' to Yes — or configure NOTIFICATION_CLI_ENTRA_CLIENT_SECRET instead.",
+    };
+  }
+  return {};
+}
+
 export function createMsalAuthClient(
   config: EntraConfig,
   assertion: AssertionSource = managedIdentityAssertion,
@@ -364,7 +379,10 @@ export function createEntraSessionProvider(
       // Entra ID's own description names the defect — a redirect URI under
       // the wrong platform, an expired secret, a rejected assertion — and it
       // is unreachable if this is left to the generic 500 handler.
-      json(response, 502, { error: `Entra ID rejected the sign-in: ${String(error)}` });
+      json(response, 502, {
+        error: `Entra ID rejected the sign-in: ${String(error)}`,
+        ...remediation(String(error)),
+      });
       return;
     }
 

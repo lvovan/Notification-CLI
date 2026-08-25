@@ -245,7 +245,10 @@ test("a rejected code exchange reports what Entra ID said", async () => {
       headers: { cookie: flowCookie },
     });
     assert.equal(callback.status, 502);
-    assert.match(String((await callback.json()).error), /AADSTS7000218/);
+    const body = (await callback.json()) as { error: string; remedy?: string };
+    assert.match(body.error, /AADSTS7000218/);
+    // The one rejection with a fixed remedy says what that remedy is.
+    assert.match(String(body.remedy), /public client/);
   });
 });
 
