@@ -86,15 +86,26 @@ a thin adapter over that table, so the two cannot drift apart.
    *deploy_app_service* enabled.
 
 4. **Publish** by setting the repository variable `AZURE_APP_SERVICE_NAME` to
-   the site name reported by that run. Set `AZURE_RESOURCE_GROUP` too if the
-   group is not called `notification-cli`. The deploy workflow skips the App
-   Service step entirely while `AZURE_APP_SERVICE_NAME` is empty.
+   the site name reported by that run, and storing the site''s publish profile
+   as the secret `AZURE_APP_SERVICE_PUBLISH_PROFILE`:
 
-   No publish profile is needed: the workflow signs in with the same OpenID
-   Connect identity the infrastructure workflow uses, so it needs no new
-   credential as long as that identity has Contributor on the resource group.
-   App Service disables SCM basic authentication on new sites, which is why a
-   publish profile is the wrong tool here.
+   ```powershell
+   az webapp deployment list-publishing-profiles `
+     --name <site> --resource-group notification-cli --xml
+   ```
+
+   The profile is only issued while SCM basic authentication is enabled, which
+   Azure turns off by default on new sites. Turn it back on, or the command
+   returns nothing:
+
+   ```powershell
+   az resource update --resource-group notification-cli `
+     --namespace Microsoft.Web --resource-type basicPublishingCredentialsPolicies `
+     --name scm --parent sites/<site> --set properties.allow=true
+   ```
+
+   The deploy workflow skips the App Service step entirely while
+   `AZURE_APP_SERVICE_NAME` is empty.
 
 5. **Add a custom domain and certificate**, if you use one. App Service issues
    a free managed certificate on B1, but only after the hostname is bound:
@@ -766,8 +777,9 @@ and API. Unlike the infrastructure workflow it also runs on every push to
 `main`.
 
 The same run publishes the App Service host once the `AZURE_APP_SERVICE_NAME`
-variable names a site; the step is skipped while the variable is empty. Both
-hosts are therefore always deployed from the same commit and stay in step.
+variable and the `AZURE_APP_SERVICE_PUBLISH_PROFILE` secret exist; the step is
+skipped while the variable is empty. Both hosts are therefore always deployed
+from the same commit and stay in step.
 
 ## Breaking migration for this release
 
