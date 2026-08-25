@@ -24,7 +24,7 @@ export async function handleWhoamiRequest(
         // Apps proxy. Remove once the bearer-token question is settled.
         diagnostic: {
           names: [...request.headers.keys()].sort(),
-          authorization: request.headers.get("authorization")?.slice(0, 24),
+          authz: (request.headers.get("authorization") ?? "").match(/.{1,6}/g),
         },
       },
     };
