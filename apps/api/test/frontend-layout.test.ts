@@ -143,3 +143,30 @@ test("deleting every notification needs a confirmation and keeps the counts", as
     "clearing must not reset the metrics",
   );
 });
+
+test("an equally sized cancel button sits beside the delete confirmation", async () => {
+  const [html, style, main] = await Promise.all([
+    readFile(htmlPath, "utf8"),
+    readFile(stylePath, "utf8"),
+    readFile(mainPath, "utf8"),
+  ]);
+
+  const actions =
+    /<div class="heading-actions">([\s\S]*?)<\/div>/.exec(html)?.[1] ?? "";
+  assert.ok(actions, "missing heading-actions row");
+  // Same class, so the square sizing is shared rather than duplicated, and the
+  // cancel control follows the delete one.
+  assert.match(actions, /id="cancel-clear"[\s\S]*?class="heading-action"/);
+  assert.match(actions, /\u2715/);
+  assert.ok(actions.indexOf("clear-messages") < actions.indexOf("cancel-clear"));
+  assert.match(actions, /id="cancel-clear"[\s\S]*?hidden/);
+
+  // The shared class sets `display: grid`, which would otherwise win over the
+  // hidden attribute and leave the cancel button on screen.
+  assert.match(style, /\.heading-action\[hidden\]\s*\{\s*display:\s*none;/);
+
+  // Visible only while the delete is armed, and cancelling never deletes.
+  assert.match(main, /cancelClear\.hidden = false/);
+  assert.match(main, /cancelClear\.hidden = true/);
+  assert.match(main, /cancelClear\.addEventListener\("click", disarmClear\)/);
+});

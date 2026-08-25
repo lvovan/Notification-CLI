@@ -457,6 +457,12 @@ a {
 
 /* Sits opposite the section title; sized to the heading rather than the taller
    API key controls, so the row stays visually level. */
+.heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .heading-action {
   display: grid;
   width: 1.9rem;
@@ -480,6 +486,11 @@ a {
 .heading-action:disabled {
   cursor: wait;
   opacity: 0.6;
+}
+
+/* `display: grid` above would otherwise defeat the hidden attribute. */
+.heading-action[hidden] {
+  display: none;
 }
 
 /* The armed control spells out "Confirm", so it needs room to grow. */

@@ -58,6 +58,7 @@ const messagesStatus = requiredElement("messages-status");
 const messageListSentinel = requiredElement("message-list-sentinel");
 const refreshMessages = requiredElement<HTMLButtonElement>("refresh-messages");
 const clearMessages = requiredElement<HTMLButtonElement>("clear-messages");
+const cancelClear = requiredElement<HTMLButtonElement>("cancel-clear");
 const apiKeyValue = requiredElement<HTMLInputElement>("api-key");
 const copyApiKey = requiredElement<HTMLButtonElement>("copy-api-key");
 const cycleApiKey = requiredElement<HTMLButtonElement>("cycle-api-key");
@@ -103,6 +104,7 @@ let cycleArmTimer: number | undefined;
 const CYCLE_ARM_TIMEOUT_MS = 4000;
 let clearArmTimer: number | undefined;
 let clearBusy = false;
+let lastRetentionDays: number | undefined;
 
 function createActionButton(label: string, id: string): HTMLButtonElement {
   const button = document.createElement("button");
@@ -282,6 +284,7 @@ class SessionAwareError extends Error {
 }
 
 function setHistoryStatus(retentionDays: number | undefined): void {
+  lastRetentionDays = retentionDays;
   messagesStatus.textContent =
     typeof retentionDays === "number"
       ? `Notifications are kept for ${retentionDays} day${
@@ -436,12 +439,18 @@ async function reloadNotificationHistory(): Promise<void> {
 }
 
 function disarmClear(): void {
+  const wasArmed = clearMessages.dataset.armed === "true";
   window.clearTimeout(clearArmTimer);
   clearArmTimer = undefined;
   clearMessages.removeAttribute("data-armed");
   clearMessages.textContent = "🗑️";
   clearMessages.setAttribute("aria-label", "Delete all notifications");
   clearMessages.title = "Delete all notifications";
+  cancelClear.hidden = true;
+  if (wasArmed) {
+    // Take back the warning the arming put there; nothing was deleted.
+    setHistoryStatus(lastRetentionDays);
+  }
 }
 
 function armClear(): void {
@@ -449,6 +458,7 @@ function armClear(): void {
   clearMessages.textContent = "Confirm";
   clearMessages.setAttribute("aria-label", "Confirm deleting all notifications");
   clearMessages.title = "Confirm deleting all notifications";
+  cancelClear.hidden = false;
   messagesStatus.textContent =
     "This deletes every notification for good. Counts are kept. Click Confirm to continue.";
   messagesStatus.classList.remove("error");
@@ -1037,6 +1047,7 @@ clearMessages.addEventListener("click", () => {
     armClear();
   }
 });
+cancelClear.addEventListener("click", disarmClear);
 copyApiKey.addEventListener("click", copyApiKeyToClipboard);
 cycleApiKey.addEventListener("click", () => {
   if (apiKeyCycleBusy) {

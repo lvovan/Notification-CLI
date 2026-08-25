@@ -362,7 +362,9 @@ signed-in account and answers `{ "deleted": <count> }`. Like the read endpoint
 it is gated by Microsoft account authentication, never reachable with an API
 key, and scoped to the caller's own partition. The 🗑️ control on the
 notifications heading calls it behind a two-step confirmation: the first click
-arms the button, a second within four seconds deletes.
+arms the button, a second within four seconds deletes. A cancel button occupying
+exactly the space the trash icon vacated, Escape, or a click anywhere else backs
+out.
 
 The sweep is lazy: every accepted send appends the new notification and then
 deletes that user's rows that have fallen outside the retention window, so no

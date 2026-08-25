@@ -155,15 +155,27 @@
               Notifications
             </button>
           </h2>
-          <button
-            id="clear-messages"
-            class="heading-action"
-            type="button"
-            aria-label="Delete all notifications"
-            title="Delete all notifications"
-          >
-            🗑️
-          </button>
+          <div class="heading-actions">
+            <button
+              id="clear-messages"
+              class="heading-action"
+              type="button"
+              aria-label="Delete all notifications"
+              title="Delete all notifications"
+            >
+              🗑️
+            </button>
+            <button
+              id="cancel-clear"
+              class="heading-action"
+              type="button"
+              aria-label="Keep the notifications"
+              title="Keep the notifications"
+              hidden
+            >
+              ✕
+            </button>
+          </div>
         </div>
         <ol id="message-list">
           <li id="empty-state" class="empty-state">
