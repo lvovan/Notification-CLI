@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { resolve } from "node:path";
 import test from "node:test";
-import { createNotificationServer } from "../src/server.js";
+import { createNotificationServer, PUBLIC_ASSETS } from "../src/server.js";
 import { GLOBAL_HEADERS } from "../src/response.js";
 import type { SessionProvider } from "../src/session.js";
 
@@ -77,6 +77,47 @@ test("OAuth discovery probes are served without the sign-in gate", async () => {
     assert.deepEqual(await unknown.json(), { error: "Unknown endpoint." });
   });
   assert.equal(resolved, 0);
+});
+
+test("install metadata is readable without signing in, so iOS gets the real icon", async () => {
+  let resolved = 0;
+  await withServer(
+    session(null, () => (resolved += 1)),
+    async (origin) => {
+      for (const path of PUBLIC_ASSETS) {
+        const response = await fetch(`${origin}${path}`, { redirect: "manual" });
+        assert.equal(response.status, 200, `${path} must not redirect to sign-in`);
+        assert.doesNotMatch(
+          response.headers.get("content-type") ?? "",
+          /text\/html/,
+          `${path} must answer with the asset, never a sign-in page`,
+        );
+      }
+    },
+    resolve("../web/public"),
+  );
+  assert.equal(resolved, 0, "install metadata must not consult the session");
+});
+
+test("every icon the browser is told to fetch is public", async () => {
+  // A gated icon fails silently: the platform simply draws a letter tile.
+  const manifest = JSON.parse(
+    await readFile(resolve("../web/public/manifest.webmanifest"), "utf8"),
+  ) as { icons: { src: string }[] };
+  for (const icon of manifest.icons) {
+    assert.ok(PUBLIC_ASSETS.has(icon.src), `${icon.src} is in the manifest but gated`);
+  }
+
+  const html = await readFile(resolve("../web/index.html"), "utf8");
+  const linked = [
+    ...html.matchAll(
+      /<link[^>]+rel="(?:apple-touch-icon|icon|manifest)"[^>]*href="([^"]+)"/g,
+    ),
+  ].flatMap(([, href]) => (href ? [href] : []));
+  assert.ok(linked.length >= 3, `expected the shell to link icons and the manifest, found ${linked.length}`);
+  for (const href of linked) {
+    assert.ok(PUBLIC_ASSETS.has(href), `${href} is linked from the shell but gated`);
+  }
 });
 
 test("CSP permits the mandatory inline theme bootstrap by hash", async () => {

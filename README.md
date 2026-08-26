@@ -614,6 +614,17 @@ The connection status dot is also a test button. Hovering it shows
 `Click to send a test message`, and clicking or tapping it sends a notification
 to your own account.
 
+When the browser cannot do Web Push at all, the status card shows a short
+`Notifications unavailable` link instead of the bell. Selecting it opens a help
+dialog whose instructions are chosen from the user agent, so an iPhone visitor
+is told to add the app to the Home Screen while a desktop visitor is told where
+the site's notification permission lives. `apps/web/src/push-help.ts` holds that
+mapping as a pure function so every device and browser combination is unit
+tested without a browser. Its precedence is deliberate: an insecure origin is
+reported first, then the Apple platforms, because iOS restricts Web Push to
+installed web apps whatever the browser brand — every iOS browser is WebKit
+underneath, so a Chrome or Edge user agent there still needs the Safari answer.
+
 For local App Service development, run `dist\server` as shown in
 [Build the web application and server](#build-the-web-application-and-server)
 and provide the same application settings in the environment.
@@ -735,6 +746,32 @@ The rest of the flow makes sure a new worker is noticed and applied promptly:
 
 The worker never caches its own script, which would otherwise let a stale copy
 shadow a freshly deployed one.
+
+## Home screen icon
+
+The web app is gated: every path outside `/api`, `/oauth`, `/.well-known` and
+`/.auth` redirects an anonymous visitor to Microsoft sign-in. The install
+metadata is the deliberate exception, listed in `PUBLIC_ASSETS` in
+`apps/server/src/server.ts`:
+
+`/manifest.webmanifest`, `/apple-touch-icon.png`, `/icon.svg`, `/icon-192.png`,
+`/icon-512.png` and `/icon-maskable-512.png` are served anonymously, without
+consulting the session at all.
+
+This is not a convenience. When a browser adds the app to the home screen it
+fetches the icon **outside the authenticated browsing context**, with no session
+cookie. A gated icon therefore answers with a `302` to the sign-in page, the
+platform receives HTML where it expected an image, and it silently falls back to
+a generated letter tile — a plain "N" — with no error anywhere. Safari happened
+to hide the problem because its own add-to-home-screen flow reuses the browsing
+session; Edge for iOS did not, which is why the two disagreed on the same site.
+
+None of these files describe the signed-in user, so publishing them discloses
+nothing. Two tests in `apps/server/test/hosting.test.ts` keep this working: one
+asserts the assets are reachable anonymously and never answer with HTML, the
+other asserts that every icon named in `manifest.webmanifest` and every icon or
+manifest `<link>` in `index.html` appears in `PUBLIC_ASSETS`. Adding an icon
+without publishing it fails the build rather than shipping a letter tile.
 
 ## Configure the MCP server
 

@@ -308,6 +308,130 @@ time {
   color: var(--cp-danger);
 }
 
+/* Looks like the red status text, but is a real button that opens help. */
+.push-help-trigger {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--cp-danger);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+
+.push-help-trigger::after {
+  content: " ⓘ";
+  text-decoration: none;
+}
+
+.push-help-trigger:focus-visible {
+  outline: 2px solid var(--cp-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.push-help-dialog {
+  width: min(92vw, 22rem);
+  max-width: 22rem;
+  padding: 0;
+  border: 1px solid var(--cp-border);
+  border-radius: 0.9rem;
+  background: var(--cp-surface);
+  color: var(--cp-text);
+  box-shadow: var(--cp-shadow);
+}
+
+.push-help-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+/* Fallback centring when showModal() is unavailable and we open in-flow. */
+.push-help-dialog--fallback-open {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  margin: auto;
+  height: fit-content;
+}
+
+.push-help-dialog__body {
+  padding: 1.25rem;
+}
+
+.push-help-title {
+  margin: 0 0 0.75rem;
+  font-size: 1.1rem;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.push-help-steps {
+  margin: 0;
+  padding-left: 1.5rem;
+  display: block;
+  gap: 0;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  list-style: decimal;
+  list-style-position: outside;
+}
+
+.push-help-steps li {
+  display: list-item;
+  grid-template-columns: none;
+  gap: 0;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  list-style: decimal;
+}
+
+.push-help-steps li:last-child {
+  margin-bottom: 0;
+}
+
+.push-help-steps li::marker {
+  color: var(--cp-text);
+}
+
+.push-help-note {
+  margin: 0.9rem 0 0;
+  font-size: 0.85rem;
+  color: var(--cp-text-muted);
+}
+
+.push-help-note[hidden] {
+  display: none;
+}
+
+.push-help-close {
+  appearance: none;
+  margin-top: 1.1rem;
+  padding: 0.55rem 1.1rem;
+  border: 0;
+  border-radius: 0.6rem;
+  background: var(--cp-accent);
+  color: var(--cp-accent-fg);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.push-help-close:hover {
+  background: var(--cp-accent-hover);
+}
+
+.push-help-close:focus-visible {
+  outline: 2px solid var(--cp-accent);
+  outline-offset: 2px;
+}
+
 a {
   color: var(--cp-link);
 }

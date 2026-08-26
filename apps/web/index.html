@@ -195,6 +195,25 @@
       </section>
 
       <footer>Notification CLI - (C) Luc Vo Van, 2026 - Built with AI</footer>
+
+      <dialog
+        id="push-help-dialog"
+        class="push-help-dialog"
+        aria-labelledby="push-help-title"
+      >
+        <div class="push-help-dialog__body">
+          <h2 id="push-help-title" class="push-help-title"></h2>
+          <ol id="push-help-steps" class="push-help-steps"></ol>
+          <p id="push-help-note" class="push-help-note" hidden></p>
+          <button
+            id="push-help-close"
+            class="push-help-close"
+            type="button"
+          >
+            Got it
+          </button>
+        </div>
+      </dialog>
     </main>
     <script type="module">
       const gate = document.querySelector("#auth-gate");

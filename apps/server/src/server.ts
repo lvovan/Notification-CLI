@@ -66,6 +66,21 @@ async function dispatch(
   return true;
 }
 
+/**
+ * Install metadata, which a browser fetches outside the authenticated browsing
+ * context. iOS builds the Home Screen icon from an anonymous request and paints
+ * a generated letter tile when that request answers with a sign-in redirect
+ * instead of an image. None of these files describe the signed-in user.
+ */
+export const PUBLIC_ASSETS: ReadonlySet<string> = new Set([
+  "/manifest.webmanifest",
+  "/apple-touch-icon.png",
+  "/icon.svg",
+  "/icon-192.png",
+  "/icon-512.png",
+  "/icon-maskable-512.png",
+]);
+
 /** Everything outside `/api` and `/.auth` is the application, and is gated. */
 async function serveApplication(
   message: IncomingMessage,
@@ -73,6 +88,11 @@ async function serveApplication(
   url: URL,
   options: ServerOptions,
 ): Promise<void> {
+  if (PUBLIC_ASSETS.has(url.pathname)) {
+    await serveStatic(response, options.webRoot, url.pathname);
+    return;
+  }
+
   const email = await options.session.resolve(message);
   if (!email) {
     const target = encodeURIComponent(`${url.pathname}${url.search}`);

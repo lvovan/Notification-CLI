@@ -1,4 +1,5 @@
 import "./style.css";
+import { pushHelpGuidance } from "./push-help.js";
 
 interface NegotiationResponse {
   url: string;
@@ -29,6 +30,8 @@ const TEST_NOTIFICATION_MESSAGE = "Test notification from the web app";
 const TEST_NOTIFICATION_SUCCESS =
   "Test notification sent. Waiting for it to arrive...";
 const TEST_NOTIFICATION_FEEDBACK_MS = 3000;
+/** Short, single-line label that opens the push help dialog when tapped. */
+const PUSH_UNAVAILABLE_LABEL = "Notifications unavailable";
 const SVG_NS = "http://www.w3.org/2000/svg";
 const TRASH_ICON_PATH =
   "M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-.7 11H7.7L7 9Zm2 2 .45 7h1.6l-.35-7H9Zm4.3 0-.35 7h1.6L15 11h-1.7Z";
@@ -880,6 +883,109 @@ function setPushStatus(message: string, isError = false): void {
   pushStatus.classList.toggle("error", isError);
 }
 
+const pushHelpDialog = requiredElement<HTMLDialogElement>("push-help-dialog");
+const pushHelpTitle = requiredElement("push-help-title");
+const pushHelpSteps = requiredElement<HTMLOListElement>("push-help-steps");
+const pushHelpNote = requiredElement("push-help-note");
+const pushHelpClose = requiredElement<HTMLButtonElement>("push-help-close");
+
+/** True when the page runs as an installed / Home Screen web app. */
+function isStandaloneDisplay(): boolean {
+  if (window.matchMedia("(display-mode: standalone)").matches) {
+    return true;
+  }
+  // iOS Safari predates display-mode and exposes this legacy flag instead.
+  return (navigator as { standalone?: boolean }).standalone === true;
+}
+
+function renderPushHelp(): void {
+  const guidance = pushHelpGuidance({
+    userAgent: navigator.userAgent,
+    standalone: isStandaloneDisplay(),
+    secureContext: window.isSecureContext,
+    // iPadOS Safari reports a Macintosh UA, so touch tells the platforms apart.
+    touchPoints: navigator.maxTouchPoints,
+  });
+
+  pushHelpTitle.textContent = guidance.title;
+  pushHelpSteps.replaceChildren(
+    ...guidance.steps.map((step) => {
+      const item = document.createElement("li");
+      item.textContent = step;
+      return item;
+    }),
+  );
+  if (guidance.note) {
+    pushHelpNote.textContent = guidance.note;
+    pushHelpNote.hidden = false;
+  } else {
+    pushHelpNote.textContent = "";
+    pushHelpNote.hidden = true;
+  }
+}
+
+function openPushHelp(): void {
+  renderPushHelp();
+  if (typeof pushHelpDialog.showModal === "function") {
+    pushHelpDialog.showModal();
+    return;
+  }
+  // Older iOS versions that lack Web Push can also lack <dialog>. Fall back to
+  // a plain open panel so the content stays readable and dismissible.
+  pushHelpDialog.setAttribute("open", "");
+  pushHelpDialog.classList.add("push-help-dialog--fallback-open");
+}
+
+function closePushHelp(): void {
+  if (typeof pushHelpDialog.close === "function" && pushHelpDialog.open) {
+    pushHelpDialog.close();
+  } else {
+    pushHelpDialog.removeAttribute("open");
+  }
+  pushHelpDialog.classList.remove("push-help-dialog--fallback-open");
+}
+
+pushHelpClose.addEventListener("click", closePushHelp);
+// Escape fires a native `cancel` for modal dialogs; keep the fallback class tidy.
+pushHelpDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closePushHelp();
+});
+// Clicking the backdrop lands on the dialog element itself, not its body.
+pushHelpDialog.addEventListener("click", (event) => {
+  if (event.target === pushHelpDialog) {
+    closePushHelp();
+  }
+});
+// Escape when the <dialog> fallback (non-modal) is open would not cancel.
+document.addEventListener("keydown", (event) => {
+  if (
+    event.key === "Escape" &&
+    pushHelpDialog.classList.contains("push-help-dialog--fallback-open")
+  ) {
+    event.preventDefault();
+    closePushHelp();
+  }
+});
+
+/**
+ * Renders the single interactive status: a short, non-wrapping trigger that
+ * opens the help dialog. Every "unsupported" call site funnels through here so
+ * the wording and the hidden bell toggle stay consistent.
+ */
+function setPushUnavailable(): void {
+  toggleNotifications.hidden = true;
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.className = "push-help-trigger";
+  trigger.setAttribute("aria-haspopup", "dialog");
+  trigger.title = `${PUSH_UNAVAILABLE_LABEL} — tap for help`;
+  trigger.textContent = PUSH_UNAVAILABLE_LABEL;
+  trigger.addEventListener("click", openPushHelp);
+  pushStatus.replaceChildren(trigger);
+  pushStatus.classList.add("error");
+}
+
 function setPushError(context: string, error: unknown): void {
   const detail = error instanceof Error ? error.message : "Unknown error";
   setPushStatus(`${context}: ${detail}`, true);
@@ -974,8 +1080,7 @@ async function savePushSubscription(
 
 async function syncPushSubscription(): Promise<void> {
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-    toggleNotifications.hidden = true;
-    setPushStatus("Notifications are not supported by this browser.", true);
+    setPushUnavailable();
     return;
   }
   if (!("Notification" in window) || Notification.permission !== "granted") {
@@ -1026,8 +1131,7 @@ function keysEqual(
  */
 async function restorePushState(): Promise<void> {
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-    toggleNotifications.hidden = true;
-    setPushStatus("Notifications are not supported by this browser.", true);
+    setPushUnavailable();
     return;
   }
   const registration = await activeServiceWorker();
@@ -1265,8 +1369,7 @@ if ("Notification" in window) {
     );
   }
 } else {
-  toggleNotifications.hidden = true;
-  setPushStatus("Notifications are not supported by this browser.", true);
+  setPushUnavailable();
 }
 
 void connect();
