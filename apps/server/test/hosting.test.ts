@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { resolve } from "node:path";
 import test from "node:test";
 import { createNotificationServer, PUBLIC_ASSETS } from "../src/server.js";
-import { GLOBAL_HEADERS } from "../src/response.js";
+import { GLOBAL_HEADERS, globalHeaders } from "../src/response.js";
 import type { SessionProvider } from "../src/session.js";
 
 function session(email: string | null, onResolve?: () => void): SessionProvider {
@@ -133,6 +133,31 @@ test("CSP permits the mandatory inline theme bootstrap by hash", async () => {
     csp,
     new RegExp(`script-src[^;]*'sha256-${hash}'`),
   );
+});
+
+test("CSP admits the analytics origins only when analytics are configured", () => {
+  const off = globalHeaders({})["Content-Security-Policy"] ?? "";
+  assert.equal(off.includes("clarity.ms"), false);
+  assert.equal(off.includes("c.bing.com"), false);
+
+  const on =
+    globalHeaders({ NOTIFICATION_CLI_CLARITY_PROJECT_ID: "abcd1234" })[
+      "Content-Security-Policy"
+    ] ?? "";
+  // script-src does not inherit from default-src once it is declared, and the
+  // tag loads its own beacon and pixel, so all three directives need the hosts.
+  for (const directive of ["default-src", "script-src", "img-src"]) {
+    const body = new RegExp(`${directive}([^;]*)`).exec(on)?.[1] ?? "";
+    assert.match(body, /https:\/\/\*\.clarity\.ms/, `${directive} misses clarity`);
+    assert.match(body, /https:\/\/c\.bing\.com/, `${directive} misses bing`);
+  }
+
+  // A malformed id can neither load a tag nor widen the policy.
+  const invalid =
+    globalHeaders({ NOTIFICATION_CLI_CLARITY_PROJECT_ID: "no" })[
+      "Content-Security-Policy"
+    ] ?? "";
+  assert.equal(invalid.includes("clarity.ms"), false);
 });
 
 test("the shell and worker are never served from a stale HTTP cache", async () => {

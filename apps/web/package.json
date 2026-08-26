@@ -7,6 +7,9 @@
     "build": "vite build",
     "check": "tsc -p tsconfig.json"
   },
+  "dependencies": {
+    "@notification-cli/core": "workspace:*"
+  },
   "devDependencies": {
     "vite": "^7.0.0"
   }

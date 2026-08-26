@@ -204,6 +204,7 @@ test("a completed sign-in authenticates later requests", async () => {
     assert.deepEqual(await response.json(), {
       authenticated: true,
       email: OWNER,
+      clarityProjectId: null,
     });
   });
 });

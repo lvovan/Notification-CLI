@@ -8,6 +8,7 @@ import {
   issueClientAccessToken,
   type NotificationNegotiator,
 } from "./web-pubsub.js";
+import { clarityProjectId } from "./telemetry-log.js";
 
 export async function handleNegotiateRequest(
   request: CoreRequest,
@@ -31,6 +32,7 @@ export async function handleNegotiateRequest(
 
 export function handleSessionRequest(
   request: CoreRequest,
+  env: NodeJS.ProcessEnv = process.env,
 ): CoreResponse {
   const authorization = authorizeBrowserRequest(request);
   if (!authorization.authorized) {
@@ -43,6 +45,10 @@ export function handleSessionRequest(
     jsonBody: {
       authenticated: true,
       email: authorization.email,
+      // Configured at runtime rather than baked in at build time, so the
+      // analytics project can be changed, or switched off entirely, without
+      // rebuilding and redeploying the application.
+      clarityProjectId: clarityProjectId(env),
     },
   };
 }

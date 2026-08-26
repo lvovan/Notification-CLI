@@ -3,6 +3,12 @@ import webPush, { type PushSubscription } from "web-push";
 import { hasSetting, requireSetting } from "./configuration.js";
 import type { NotificationOwner } from "./identity.js";
 import {
+  DEFAULT_NOTIFICATION_SOURCE,
+  type NotificationSource,
+} from "./telemetry.js";
+import { emitTelemetry } from "./telemetry-log.js";
+import type { CoreLogger } from "./http.js";
+import {
   tryCreateNotificationMetricsStore,
   type NotificationMetricsStore,
 } from "./metrics-storage.js";
@@ -43,6 +49,7 @@ export interface FanoutReport {
   pushDelivered: number;
   pushRemoved: number;
   pushFailed: number;
+  source?: NotificationSource;
   metricRecorded?: boolean;
   metricError?: string;
   historyRecorded?: boolean;
@@ -180,20 +187,54 @@ async function retainNotification(
   }
 }
 
+/**
+ * The delivery shape both `/api/notify` and `/api/mcp` report. Message text and
+ * the owner's address are deliberately absent: the counts answer how well the
+ * service is working, and neither of those would.
+ */
+export function emitDeliveryTelemetry(
+  context: CoreLogger | undefined,
+  event: string,
+  source: NotificationSource,
+  report: FanoutReport,
+  extra: { messageLength: number; durationMs: number },
+): void {
+  emitTelemetry(context, {
+    event,
+    source,
+    ...extra,
+    webPubSubDelivered: report.webPubSubDelivered,
+    pushConfigured: report.pushConfigured,
+    pushAttempted: report.pushAttempted,
+    pushDelivered: report.pushDelivered,
+    pushRemoved: report.pushRemoved,
+    pushFailed: report.pushFailed,
+    metricRecorded: report.metricRecorded,
+    historyRecorded: report.historyRecorded,
+    historyPruned: report.historyPruned,
+    errorCount: report.errors.length,
+  });
+}
+
+export interface FanoutOptions {
+  /** Where the notification was produced. Telemetry only. */
+  source?: NotificationSource;
+  webPubSub?: NotificationGroupSender;
+  store?: PushSubscriptionStore;
+  webPush?: WebPushSender;
+  metrics?: NotificationMetricsStore;
+  history?: NotificationHistoryStore;
+  env?: NodeJS.ProcessEnv;
+  notificationId?: () => string;
+  now?: () => Date;
+}
+
 export async function fanOutNotification(
   message: string,
   owner: NotificationOwner,
-  dependencies?: {
-    webPubSub?: NotificationGroupSender;
-    store?: PushSubscriptionStore;
-    webPush?: WebPushSender;
-    metrics?: NotificationMetricsStore;
-    history?: NotificationHistoryStore;
-    env?: NodeJS.ProcessEnv;
-    notificationId?: () => string;
-    now?: () => Date;
-  },
+  dependencies?: FanoutOptions,
 ): Promise<FanoutReport> {
+  const source = dependencies?.source ?? DEFAULT_NOTIFICATION_SOURCE;
   const report: FanoutReport = {
     webPubSubDelivered: false,
     pushConfigured: false,
@@ -201,6 +242,7 @@ export async function fanOutNotification(
     pushDelivered: 0,
     pushRemoved: 0,
     pushFailed: 0,
+    source,
     errors: [],
   };
 
@@ -217,13 +259,20 @@ export async function fanOutNotification(
     body: message,
     sentAt: sentAt.getTime(),
   };
-  const pushPayload = JSON.stringify(notification);
+  /**
+   * The source rides along with the live delivery only. It is telemetry about
+   * how a notification was produced rather than part of the message, so it is
+   * reported to a browser that is open at the time and deliberately not
+   * retained: replaying history must not manufacture fresh arrival events.
+   */
+  const delivered = { ...notification, source };
+  const pushPayload = JSON.stringify(delivered);
 
   const results = await Promise.allSettled([
     // Delivery is scoped to the owner's group. The SDK serializes JSON payloads
     // itself, so the object must be passed through unstringified to avoid
     // double-encoding it for browsers.
-    sendToUserGroup(webPubSub, owner.email, notification),
+    sendToUserGroup(webPubSub, owner.email, delivered),
     (async () => {
       if (!store || !sender) {
         return;

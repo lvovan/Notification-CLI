@@ -204,8 +204,9 @@ test("fan-out delivers through Web PubSub and Web Push", async () => {
   };
   // The Web PubSub SDK serializes JSON payloads itself; sending a string here
   // would double-encode the notification and reach browsers as quoted JSON.
-  assert.deepEqual(pubSubMessages, [notification]);
-  assert.deepEqual(pushPayloads, [JSON.stringify(notification)]);
+  const delivered = { ...notification, source: "cli" };
+  assert.deepEqual(pubSubMessages, [delivered]);
+  assert.deepEqual(pushPayloads, [JSON.stringify(delivered)]);
   assert.deepEqual(report, {
     webPubSubDelivered: true,
     pushConfigured: true,
@@ -213,6 +214,7 @@ test("fan-out delivers through Web PubSub and Web Push", async () => {
     pushDelivered: 1,
     pushRemoved: 0,
     pushFailed: 0,
+    source: "cli",
     errors: [],
   });
 });
@@ -239,6 +241,7 @@ test("fan-out succeeds through Web PubSub alone when push is not configured", as
     pushDelivered: 0,
     pushRemoved: 0,
     pushFailed: 0,
+    source: "cli",
     errors: [],
   });
 });

@@ -66,7 +66,7 @@
         ></button>
         <div class="status-text">
           <strong id="status">Connecting...</strong>
-          <p class="push-status" id="account-email"></p>
+          <p class="push-status" id="account-email" data-clarity-mask="true"></p>
           <p
             id="push-status"
             class="push-status"
@@ -114,7 +114,11 @@
         ></p>
       </section>
 
-      <section class="apikey-card" aria-label="Personal API key">
+      <section
+        class="apikey-card"
+        aria-label="Personal API key"
+        data-clarity-mask="true"
+      >
         <div class="apikey-field">
           <input
             id="api-key"
@@ -179,7 +183,7 @@
             ><svg class="heading-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12 19 17.6 17.6 19 12 13.4 6.4 19 5 17.6 10.6 12 5 6.4 6.4 5Z"></path></svg></button>
           </div>
         </div>
-        <ol id="message-list">
+        <ol id="message-list" data-clarity-mask="true">
           <li id="empty-state" class="empty-state">
             <span>Ready and listening</span>
             New notifications will appear here.
@@ -230,6 +234,10 @@
         if (response.ok) {
           document.querySelector("#account-email").textContent =
             session.email ?? "";
+          // Handed to main.ts through the DOM so the analytics tag is
+          // configured from application settings without a second request.
+          document.documentElement.dataset.telemetryProject =
+            session.clarityProjectId ?? "";
           gate.hidden = true;
           app.hidden = false;
           await import("/src/main.ts");

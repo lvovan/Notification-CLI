@@ -25,13 +25,21 @@ test("the api key section sits below the metrics and above the notifications", a
   assert.ok(metrics >= 0 && apikey >= 0 && messages >= 0);
   assert.ok(metrics < apikey, "the key section must follow the metrics tiles");
   assert.ok(apikey < messages, "the key section must precede notifications");
-  assert.match(html, /<section class="apikey-card" aria-label="[^"]+"/);
+  assert.match(html, /<section[^>]*class="apikey-card"[^>]*aria-label="[^"]+"/);
+});
+
+test("the key section is masked out of session replays", async () => {
+  const html = await readFile(htmlPath, "utf8");
+  const section =
+    /<section[^>]*class="apikey-card"[\s\S]*?<\/section>/.exec(html)?.[0] ?? "";
+
+  assert.match(section, /data-clarity-mask="true"/);
 });
 
 test("the key field is read-only and both controls carry accessible names", async () => {
   const html = await readFile(htmlPath, "utf8");
   const section =
-    /<section class="apikey-card"[\s\S]*?<\/section>/.exec(html)?.[0] ?? "";
+    /<section[^>]*class="apikey-card"[\s\S]*?<\/section>/.exec(html)?.[0] ?? "";
 
   // The field is displayed, not editable, so it can only ever show the mask.
   assert.match(section, /id="api-key"[\s\S]*?readonly/);

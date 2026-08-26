@@ -1,6 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { createServer } from "node:net";
 
 const requiredFiles = [
   "dist/server/dist/main.js",
@@ -44,12 +45,25 @@ await smokeServer();
 console.log("Package smoke test passed");
 
 /**
+ * A fixed port makes the smoke test fail on any machine that already has
+ * something listening on it, which says nothing about the package.
+ */
+async function freePort() {
+  const probe = createServer();
+  probe.listen(0, "127.0.0.1");
+  await once(probe, "listening");
+  const { port } = probe.address();
+  await new Promise((resolve) => probe.close(resolve));
+  return port;
+}
+
+/**
  * Starts the packaged App Service host and checks the frontend gate plus OAuth
  * metadata. File assertions above prove the static web root is bundled without
  * needing a live Entra sign-in.
  */
 async function smokeServer() {
-  const port = 8791;
+  const port = await freePort();
   const server = spawn(process.execPath, ["dist/main.js"], {
     cwd: "dist/server",
     env: {

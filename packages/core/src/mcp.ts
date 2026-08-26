@@ -8,6 +8,7 @@ import { resolveApiKeyOwner } from "./api-key.js";
 import type { ApiKeyStore } from "./api-key-storage.js";
 import { ConfigurationError } from "./configuration.js";
 import {
+  emitDeliveryTelemetry,
   FanoutError,
   fanOutNotification,
   validateNotificationMessage,
@@ -15,6 +16,11 @@ import {
 } from "./fanout.js";
 import type { NotificationOwner } from "./identity.js";
 import type { OAuthStore } from "./oauth-storage.js";
+import { emitTelemetry } from "./telemetry-log.js";
+import { type NotificationSource } from "./telemetry.js";
+
+/** Every notification produced through MCP is, by definition, MCP traffic. */
+const MCP_SOURCE: NotificationSource = "mcp";
 
 /** Where a client is told to look for the authorization server (RFC 9728). */
 function protectedResourceMetadataUrl(request: CoreRequest): string {
@@ -84,6 +90,7 @@ export async function handleMcpRequest(
   fanOut: (
     message: string,
     owner: NotificationOwner,
+    options: { source: NotificationSource },
   ) => Promise<FanoutReport> = fanOutNotification,
   context?: CoreLogger,
   keys?: ApiKeyStore | null,
@@ -93,6 +100,7 @@ export async function handleMcpRequest(
   try {
     const resolution = await resolveApiKeyOwner(request, env, keys, oauth);
     if (!resolution.authorized) {
+      emitTelemetry(context, { event: "mcp.rejected", reason: "unauthorized" });
       // The challenge is how a client discovers where to obtain a token.
       return {
         status: 401,
@@ -130,6 +138,7 @@ export async function handleMcpRequest(
 
   switch (rpcRequest.method) {
     case "initialize":
+      emitTelemetry(context, { event: "mcp.method", method: "initialize" });
       return jsonRpcResult(rpcRequest.id, {
         protocolVersion: "2025-06-18",
         capabilities: { tools: {} },
@@ -140,12 +149,18 @@ export async function handleMcpRequest(
     case "ping":
       return jsonRpcResult(rpcRequest.id, {});
     case "tools/list":
+      emitTelemetry(context, { event: "mcp.method", method: "tools/list" });
       return jsonRpcResult(rpcRequest.id, { tools: [tool] });
     case "tools/call": {
       const params = rpcRequest.params as ToolCallParams | undefined;
       const args = params?.arguments as { message?: unknown } | undefined;
       const message = validateNotificationMessage(args?.message);
       if (params?.name !== tool.name || !message) {
+        emitTelemetry(context, {
+          event: "mcp.method",
+          method: "tools/call",
+          outcome: "invalid-params",
+        });
         return jsonRpcError(
           rpcRequest.id,
           -32602,
@@ -153,12 +168,27 @@ export async function handleMcpRequest(
         );
       }
 
+      const startedAt = Date.now();
       try {
-        await fanOut(message, owner);
+        const delivery = await fanOut(message, owner, { source: MCP_SOURCE });
+        emitDeliveryTelemetry(context, "mcp.delivered", MCP_SOURCE, delivery, {
+          messageLength: message.length,
+          durationMs: Date.now() - startedAt,
+        });
       } catch (error) {
         if (error instanceof FanoutError) {
           context?.error(
             `Notification delivery was incomplete: ${error.report.errors.join("; ")}`,
+          );
+          emitDeliveryTelemetry(
+            context,
+            "mcp.failed",
+            MCP_SOURCE,
+            error.report,
+            {
+              messageLength: message.length,
+              durationMs: Date.now() - startedAt,
+            },
           );
           return jsonRpcResult(rpcRequest.id, {
             isError: true,
@@ -172,6 +202,12 @@ export async function handleMcpRequest(
         }
         if (error instanceof ConfigurationError) {
           context?.error(`Notification API misconfigured: ${error.message}`);
+          emitTelemetry(context, {
+            event: "mcp.failed",
+            method: "tools/call",
+            reason: "misconfigured",
+            setting: error.setting,
+          });
           return jsonRpcResult(rpcRequest.id, {
             isError: true,
             content: [
@@ -189,6 +225,13 @@ export async function handleMcpRequest(
       });
     }
     default:
+      emitTelemetry(context, {
+        event: "mcp.method",
+        // Client-supplied, so it is truncated: a hostile caller must not be
+        // able to choose the length of a log line.
+        method: rpcRequest.method.slice(0, 64),
+        outcome: "unsupported",
+      });
       return jsonRpcError(rpcRequest.id, -32601, "Method not found");
   }
 }

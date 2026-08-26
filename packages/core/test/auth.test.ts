@@ -104,6 +104,7 @@ test("session reports authentication without caching", () => {
   assert.deepEqual(response.jsonBody, {
     authenticated: true,
     email: "user@example.com",
+    clarityProjectId: null,
   });
 
   const denied = handleSessionRequest(

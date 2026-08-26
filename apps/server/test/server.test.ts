@@ -47,6 +47,7 @@ test("an API route reaches the shared handler with the resolved identity", async
     assert.deepEqual(await response.json(), {
       authenticated: true,
       email: OWNER,
+      clarityProjectId: null,
     });
     assert.equal(response.headers.get("cache-control"), "no-store");
     assert.equal(response.headers.get("x-content-type-options"), "nosniff");

@@ -35,6 +35,10 @@ importers:
         version: 4.23.12
 
   apps/web:
+    dependencies:
+      '@notification-cli/core':
+        specifier: workspace:*
+        version: link:../../packages/core
     devDependencies:
       vite:
         specifier: ^7.0.0

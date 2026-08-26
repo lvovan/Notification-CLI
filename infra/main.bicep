@@ -55,6 +55,9 @@ param entraClientSecret string = ''
 @secure()
 param sessionSecret string = ''
 
+@description('Microsoft Clarity project ID. Leave empty to collect no browser analytics.')
+param clarityProjectId string = ''
+
 // Storage account names are globally unique, lower-case, alphanumeric and at
 // most 24 characters, so they cannot simply reuse the prefix.
 var storageAccountName = take(
@@ -77,6 +80,7 @@ var tableNames = [
 ]
 
 var pushConfigured = !empty(vapidPublicKey)
+var telemetryConfigured = !empty(clarityProjectId)
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2025-08-01' = {
   name: storageAccountName
@@ -153,6 +157,16 @@ var sharedSettings = concat(
         {
           name: 'NOTIFICATION_CLI_VAPID_SUBJECT'
           value: vapidSubject
+        }
+      ]
+    : [],
+  // Absent rather than empty when unset: the host widens its
+  // Content-Security-Policy only for a configured project.
+  telemetryConfigured
+    ? [
+        {
+          name: 'NOTIFICATION_CLI_CLARITY_PROJECT_ID'
+          value: clarityProjectId
         }
       ]
     : []
@@ -240,6 +254,9 @@ output storageAccountName string = storageAccount.name
 
 @description('Whether Web Push settings were supplied. When false, notifications only reach open browser tabs.')
 output pushConfigured bool = pushConfigured
+
+@description('Whether browser analytics were configured. When false, no third-party tag is loaded.')
+output telemetryConfigured bool = telemetryConfigured
 
 @description('Name of the App Service host.')
 output appServiceName string = appService.name

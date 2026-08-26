@@ -1,5 +1,19 @@
 import "./style.css";
 import { pushHelpGuidance } from "./push-help.js";
+import type { NotificationSource } from "@notification-cli/core/telemetry";
+import { NOTIFICATION_SOURCES, NOTIFICATION_SOURCE_HEADER } from "@notification-cli/core/telemetry";
+import {
+  ACTIVITY_BUCKETS,
+  bucket,
+  CLARITY_EVENTS,
+  CLARITY_TAGS,
+  platformName,
+  startTelemetry,
+  tagSession,
+  trackEvent,
+  trackNotificationArrival,
+  VOLUME_BUCKETS,
+} from "./telemetry.js";
 
 interface NegotiationResponse {
   url: string;
@@ -42,6 +56,8 @@ interface IncomingNotification {
   id?: string;
   message: string;
   sentAt?: number;
+  /** Set by the server on live deliveries only; absent from stored history. */
+  source?: NotificationSource;
 }
 
 interface RetainedNotification {
@@ -73,6 +89,7 @@ const apiKeyValue = requiredElement<HTMLInputElement>("api-key");
 const copyApiKey = requiredElement<HTMLButtonElement>("copy-api-key");
 const cycleApiKey = requiredElement<HTMLButtonElement>("cycle-api-key");
 const apiKeyStatus = requiredElement("api-key-status");
+const accountEmail = requiredElement("account-email");
 const statusCard = requiredElement<HTMLElement>("status").closest(
   ".status-card",
 );
@@ -158,6 +175,7 @@ function setStatus(
 ): void {
   statusDot.className = `status-dot ${state}`;
   status.textContent = title;
+  tagSession(CLARITY_TAGS.connection, title === "Offline" ? "offline" : state);
 }
 
 async function negotiate(): Promise<string> {
@@ -192,6 +210,7 @@ async function connect(): Promise<void> {
     socket.addEventListener("message", (event) => {
       const notification = parseIncomingNotification(event.data);
       displayMessage(notification.message, notification.id, notification.sentAt);
+      trackNotificationArrival(notification.source);
       void refreshMetrics();
     });
     socket.addEventListener("close", () => {
@@ -214,6 +233,9 @@ function scheduleReconnect(): void {
   reconnectAttempts += 1;
   const delay = Math.min(30_000, 1000 * 2 ** (reconnectAttempts - 1));
   setStatus("disconnected", "Disconnected");
+  if (reconnectAttempts === 1) {
+    trackEvent(CLARITY_EVENTS.connectionLost);
+  }
   reconnectTimer = window.setTimeout(() => void connect(), delay);
 }
 
@@ -239,6 +261,13 @@ function decodeJsonPayload(value: string): unknown {
   return current;
 }
 
+function isNotificationSource(value: unknown): value is NotificationSource {
+  return (
+    typeof value === "string" &&
+    (NOTIFICATION_SOURCES as readonly string[]).includes(value)
+  );
+}
+
 function parseIncomingNotification(value: unknown): IncomingNotification {
   if (typeof value !== "string") {
     return { message: "New notification" };
@@ -259,6 +288,9 @@ function parseIncomingNotification(value: unknown): IncomingNotification {
       message,
       ...(typeof record.id === "string" ? { id: record.id } : {}),
       ...(typeof record.sentAt === "number" ? { sentAt: record.sentAt } : {}),
+      ...(isNotificationSource(record.source)
+        ? { source: record.source }
+        : {}),
     };
   }
   return { message: String(payload) };
@@ -445,6 +477,9 @@ async function loadNotificationHistory(): Promise<void> {
     notificationHistoryCursor =
       typeof body.nextCursor === "string" ? body.nextCursor : null;
     setHistoryStatus(body.retentionDays);
+    // Paging depth shows whether anyone actually reads back through history or
+    // only ever looks at what is on screen.
+    trackEvent(CLARITY_EVENTS.historyPageLoaded);
     if (notificationHistoryCursor === null) {
       stopNotificationHistoryPaging();
     } else {
@@ -563,6 +598,7 @@ async function clearNotificationHistory(): Promise<void> {
     // Reloading rather than just emptying the list confirms the server agrees,
     // and restores the retention note the status line normally carries.
     resetNotificationList();
+    trackEvent(CLARITY_EVENTS.historyCleared);
     await loadNotificationHistory();
   } catch (error) {
     setHistoryError(error, true);
@@ -609,6 +645,21 @@ async function refreshMetrics(): Promise<void> {
       element.textContent =
         typeof value === "number" ? formatMetric(value) : "-";
       element.title = typeof value === "number" ? value.toLocaleString() : "";
+    }
+    // Server-held counters become session dimensions, so a recording can be
+    // read as "a daily driver" or "someone who has never sent anything" rather
+    // than as an anonymous page view.
+    if (typeof body.total === "number") {
+      tagSession(
+        CLARITY_TAGS.notificationVolume,
+        bucket(body.total, VOLUME_BUCKETS),
+      );
+    }
+    if (typeof body.last24Hours === "number") {
+      tagSession(
+        CLARITY_TAGS.activity24h,
+        bucket(body.last24Hours, ACTIVITY_BUCKETS),
+      );
     }
     metricsStatus.textContent = "";
     metricsStatus.classList.remove("error");
@@ -728,9 +779,11 @@ function copyApiKeyToClipboard(): void {
       () => showCopyFeedback("Copied"),
       () => copyWithExecCommand(key),
     );
+    trackEvent(CLARITY_EVENTS.apiKeyCopied);
     return;
   }
   copyWithExecCommand(key);
+  trackEvent(CLARITY_EVENTS.apiKeyCopied);
 }
 
 async function apiKeyForTestNotification(): Promise<string> {
@@ -761,6 +814,8 @@ async function sendTestNotification(): Promise<void> {
         Accept: "application/json",
         "Content-Type": "application/json",
         "x-api-key": apiKey,
+        // Otherwise the app's own test sends would be counted as CLI traffic.
+        [NOTIFICATION_SOURCE_HEADER]: "web",
       },
       body: JSON.stringify({ message: TEST_NOTIFICATION_MESSAGE }),
       cache: "no-store",
@@ -777,6 +832,7 @@ async function sendTestNotification(): Promise<void> {
       );
     }
     showTransientTestNotificationStatus(TEST_NOTIFICATION_SUCCESS);
+    trackEvent(CLARITY_EVENTS.testNotificationSent);
   } catch (error) {
     setTestNotificationError("Unable to send test notification", error);
   } finally {
@@ -819,6 +875,7 @@ async function cycleApiKeyValue(): Promise<void> {
     }
     renderApiKey(key);
     setApiKeyStatus("API key regenerated");
+    trackEvent(CLARITY_EVENTS.apiKeyCycled);
   } catch (error) {
     if (generation === apiKeyGeneration) {
       setApiKeyError("Unable to regenerate the API key", error);
@@ -854,8 +911,10 @@ function enablePushNotifications(): Promise<void> {
   return runPushTask(async () => {
     setPushStatus("Waiting for notification permission...");
     const permission = await Notification.requestPermission();
+    tagSession(CLARITY_TAGS.pushPermission, permission);
     if (permission !== "granted") {
       setPushEnabled(false);
+      trackEvent(CLARITY_EVENTS.pushFailed);
       setPushStatus(
         permission === "denied"
           ? "Notifications are blocked. Allow them in browser settings."
@@ -876,6 +935,7 @@ function setPushEnabled(enabled: boolean): void {
   toggleNotifications.setAttribute("aria-label", label);
   toggleNotifications.title = label;
   setPushStatus(enabled ? "Notifications enabled" : "Notifications disabled");
+  tagSession(CLARITY_TAGS.pushSubscribed, String(enabled));
 }
 
 function setPushStatus(message: string, isError = false): void {
@@ -926,6 +986,7 @@ function renderPushHelp(): void {
 
 function openPushHelp(): void {
   renderPushHelp();
+  trackEvent(CLARITY_EVENTS.pushHelpOpened);
   if (typeof pushHelpDialog.showModal === "function") {
     pushHelpDialog.showModal();
     return;
@@ -989,12 +1050,14 @@ function setPushUnavailable(): void {
 function setPushError(context: string, error: unknown): void {
   const detail = error instanceof Error ? error.message : "Unknown error";
   setPushStatus(`${context}: ${detail}`, true);
+  trackEvent(CLARITY_EVENTS.pushFailed);
   if (
     error instanceof SessionAwareError &&
     error.status === 401
   ) {
     // The Microsoft session expired or lost its identity while the page stayed
     // open, so recovering needs a fresh sign-in rather than a retry.
+    trackEvent(CLARITY_EVENTS.sessionExpired);
     const signIn = document.createElement("a");
     signIn.href = "/.auth/login/aad?post_login_redirect_uri=/";
     signIn.textContent = "Sign in again";
@@ -1108,6 +1171,7 @@ async function syncPushSubscription(): Promise<void> {
 
   await savePushSubscription(subscription);
   setPushEnabled(true);
+  trackEvent(CLARITY_EVENTS.pushEnabled);
 }
 
 function keysEqual(
@@ -1178,6 +1242,7 @@ function disablePushNotifications(): Promise<void> {
     }
 
     setPushEnabled(false);
+    trackEvent(CLARITY_EVENTS.pushDisabled);
     if (failures.length > 0) {
       throw new Error(failures.join("; "));
     }
@@ -1187,6 +1252,7 @@ function disablePushNotifications(): Promise<void> {
 function applyServiceWorkerUpdate(worker: ServiceWorker): void {
   connectivity.textContent = "Updating to the latest version...";
   connectivity.hidden = false;
+  trackEvent(CLARITY_EVENTS.appUpdated);
   worker.postMessage({ type: "SKIP_WAITING" });
 }
 
@@ -1319,17 +1385,25 @@ window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();
   installPrompt = event as BeforeInstallPromptEvent;
   installButton.hidden = false;
+  tagSession(CLARITY_TAGS.installPrompt, "available");
 });
 window.addEventListener("appinstalled", () => {
   installPrompt = undefined;
   installButton.hidden = true;
+  tagSession(CLARITY_TAGS.installPrompt, "installed");
+  trackEvent(CLARITY_EVENTS.installAccepted);
 });
 installButton.addEventListener("click", async () => {
   if (!installPrompt) {
     return;
   }
+  trackEvent(CLARITY_EVENTS.installPrompted);
   await installPrompt.prompt();
-  await installPrompt.userChoice;
+  const choice = await installPrompt.userChoice;
+  // `appinstalled` reports acceptance, so only the refusal is recorded here.
+  if (choice.outcome === "dismissed") {
+    trackEvent(CLARITY_EVENTS.installDismissed);
+  }
   installPrompt = undefined;
   installButton.hidden = true;
 });
@@ -1344,6 +1418,11 @@ if ("serviceWorker" in navigator) {
         event.data.message,
         typeof event.data.id === "string" ? event.data.id : undefined,
         typeof event.data.sentAt === "number" ? event.data.sentAt : undefined,
+      );
+      trackNotificationArrival(
+        isNotificationSource(event.data.source)
+          ? event.data.source
+          : undefined,
       );
       void refreshMetrics();
     }
@@ -1370,6 +1449,48 @@ if ("Notification" in window) {
   }
 } else {
   setPushUnavailable();
+}
+
+/**
+ * Analytics starts only once the session is known, so every recording carries
+ * the dimensions below from its first frame rather than acquiring them part way
+ * through. The project id arrives from application settings by way of the
+ * sign-in gate; when it is absent, every call above is inert.
+ */
+if (
+  startTelemetry({
+    projectId: document.documentElement.dataset.telemetryProject,
+    ...(accountEmail.textContent
+      ? { email: accountEmail.textContent }
+      : {}),
+  })
+) {
+  tagSession(
+    CLARITY_TAGS.appMode,
+    isStandaloneDisplay() ? "installed" : "browser",
+  );
+  tagSession(
+    CLARITY_TAGS.platform,
+    platformName(navigator.userAgent, navigator.maxTouchPoints),
+  );
+  tagSession(
+    CLARITY_TAGS.theme,
+    document.documentElement.dataset.theme ?? "dark",
+  );
+  tagSession(
+    CLARITY_TAGS.pushPermission,
+    "Notification" in window ? Notification.permission : "unsupported",
+  );
+  // Corrected by setPushEnabled once the existing subscription, if any, has
+  // been restored; permission granted is not the same as subscribed.
+  tagSession(CLARITY_TAGS.pushSubscribed, "false");
+  // An installed app never receives `beforeinstallprompt`, and neither does a
+  // browser that has no install flow, so the tag is set to the pessimistic
+  // value and corrected if the prompt actually arrives.
+  tagSession(
+    CLARITY_TAGS.installPrompt,
+    isStandaloneDisplay() ? "installed" : "unavailable",
+  );
 }
 
 void connect();

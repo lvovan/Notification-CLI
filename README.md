@@ -563,6 +563,7 @@ configure a manually created instance:
 | `NOTIFICATION_CLI_ENTRA_CLIENT_ID` | Application ID of that registration |
 | `NOTIFICATION_CLI_ENTRA_CLIENT_SECRET` | Client secret of that registration. Optional: unset means a managed-identity assertion, or no credential at all for a public client |
 | `NOTIFICATION_CLI_SESSION_SECRET` | The HMAC key signing the sign-in cookie; generate 32 random bytes as shown in [Hosting](#hosting). Changing it signs every browser out |
+| `NOTIFICATION_CLI_CLARITY_PROJECT_ID` | Optional. Microsoft Clarity project ID. Unset means no analytics tag is loaded and no third-party origin is allowed. See [Usage analytics](#usage-analytics) |
 | `NOTIFICATION_CLI_WEB_ROOT` | Optional path to the frontend files. Defaults to `web` next to the bundle |
 
 Real-time delivery through Web PubSub is the required core transport. The
@@ -645,6 +646,126 @@ Metrics are telemetry: if the storage account is unreachable the notification
 is still delivered, and the response reports the problem in `delivery.metricError`
 rather than failing. Rows older than 30 days are never queried, so they can be
 deleted at any time without affecting the total.
+
+## Usage analytics
+
+Analytics are optional and off by default. Set `NOTIFICATION_CLI_CLARITY_PROJECT_ID`
+to a [Microsoft Clarity](https://clarity.microsoft.com/) project ID to turn them
+on; leave it unset and no third-party script is loaded, no third-party origin is
+allowed by the Content-Security-Policy, and nothing is collected.
+
+To get a project ID, sign in at [clarity.microsoft.com](https://clarity.microsoft.com/),
+create a project for the site's hostname, and open **Settings → Overview**. The
+ID is the short lowercase token in the tracking snippet — copy only that token,
+not the surrounding script. A value that is not 4–32 lowercase alphanumeric
+characters is ignored, so a typo cannot widen the security policy or be
+interpolated into a script URL.
+
+### How the two halves fit together
+
+Clarity is a browser product: it has no server-side ingestion API, and its Data
+Export API is read-only. A notification, however, is nearly always produced by
+something with no browser at all — the CLI or an MCP client. Telemetry is
+therefore collected on two channels:
+
+- **The browser** reports what a person did, to Clarity.
+- **The server** writes structured events to its own App Service logs, and
+  additionally *attributes* every notification to the client that produced it.
+  That attribution rides along with the live delivery, so an open page projects
+  backend-originated activity into Clarity as it arrives.
+
+The shared vocabulary lives in `packages/core/src/telemetry.ts`, which both
+halves import, so a renamed tag cannot silently split the two datasets.
+
+### What is deliberately not collected
+
+- **Message text never leaves the service.** Server events record a message
+  *length*, never a body. The notification list and the API-key card are marked
+  `data-clarity-mask="true"`, so session replays show their layout but not their
+  contents.
+- **The account address is never sent to Clarity.** Sessions are correlated with
+  a truncated SHA-256 pseudonym of the address, which is stable across visits
+  without being readable.
+- **No API key reaches the DOM.** Only the server-provided mask is rendered.
+
+### Session dimensions
+
+Clarity segments recordings, heatmaps and funnels by these. Counts are bucketed
+rather than exact, because an exact count fragments a segment into as many
+values as there are users.
+
+| Tag | Values | What it answers |
+| --- | --- | --- |
+| `app_mode` | `browser`, `installed` | Is the PWA actually being used as an installed app, or only visited? |
+| `platform` | `ios`, `android`, `macos`, `windows`, `other` | Which platforms need attention. iPadOS is detected by touch, since it claims to be a Mac |
+| `push_permission` | `granted`, `denied`, `default`, `unsupported` | How many users could receive background notifications |
+| `push_subscribed` | `true`, `false` | How many actually did — granting permission is not the same as subscribing |
+| `notification_volume` | `0`, `1-9`, `10-49`, `50-199`, `200+` | Newcomer or daily driver |
+| `activity_24h` | `0`, `1-4`, `5-19`, `20+` | Whether the account is active right now |
+| `connection` | `connected`, `connecting`, `disconnected`, `offline` | Real-time delivery reliability as experienced by the browser |
+| `install_prompt` | `available`, `unavailable`, `installed` | How large the installable audience is |
+| `theme` | `dark`, `light` | Which colour scheme the UI is actually seen in |
+| `last_notification_source` | `cli`, `mcp`, `web` | How this session's traffic was produced |
+
+### Events
+
+| Event | Fired when |
+| --- | --- |
+| `notification_received` | A notification arrives, live or through the service worker |
+| `notification_source_cli` / `_mcp` / `_web` | The same arrival, split by producer, so a funnel can separate MCP traffic from CLI traffic |
+| `test_notification_sent` | The status dot is used to send a test message |
+| `push_enabled` / `push_disabled` / `push_failed` | Background notifications are turned on, off, or fail to subscribe |
+| `push_help_opened` | The "Notifications unavailable" help dialog is opened |
+| `api_key_copied` / `api_key_cycled` | The API key is copied or regenerated |
+| `history_page_loaded` | An older page of notification history is fetched |
+| `history_cleared` | The notification list is emptied |
+| `install_prompted` / `install_accepted` / `install_dismissed` | The PWA install flow is offered, accepted, or declined |
+| `app_updated` | A new version of the frontend is activated |
+| `session_expired` | A request is rejected because the sign-in cookie is no longer valid |
+| `connection_lost` | The real-time connection drops |
+
+Useful questions these answer together: what fraction of installs go on to
+enable push (`install_accepted` → `push_enabled`); whether MCP or the CLI drives
+most traffic (`notification_source_*`); whether iOS users get stuck before
+installing (`platform` + `install_prompt`); and whether people who lose the
+real-time connection stop coming back (`connection_lost` + `activity_24h`).
+
+### Server events
+
+Written to the App Service log stream as single-line JSON, prefixed with
+`notification-cli-telemetry` so they can be filtered out of an undifferentiated
+stream:
+
+```
+notification-cli-telemetry {"event":"notify.delivered","source":"cli","messageLength":42,"durationMs":118,...}
+```
+
+| Event | Fields beyond `event` and `source` |
+| --- | --- |
+| `notify.delivered` / `mcp.delivered` | `messageLength`, `durationMs`, the Web PubSub and Web Push delivery counts, `metricRecorded`, `historyRecorded`, `historyPruned`, `errorCount` |
+| `notify.failed` / `mcp.failed` | The same, for a delivery that was incomplete, or `reason: "misconfigured"` with the `setting` that is missing |
+| `notify.rejected` / `mcp.rejected` | `reason`: `unauthorized`, `misconfigured`, `invalid-json` or `invalid-message` |
+| `mcp.method` | `method` (`initialize`, `tools/list`, `tools/call`, or a truncated unknown name) and, when it did not succeed, `outcome`: `invalid-params` or `unsupported` |
+
+These are the half of the picture Clarity cannot see, because the caller has no
+browser. Query them in the portal's **Log stream**, or with
+`az webapp log tail`. To count MCP sends over the last day:
+
+```powershell
+az webapp log tail --name <app-name> --resource-group <group> |
+  Select-String 'notification-cli-telemetry' |
+  Select-String '"event":"mcp.delivered"' |
+  Measure-Object
+```
+
+### Content-Security-Policy
+
+When a project ID is configured, `https://*.clarity.ms` and `https://c.bing.com`
+are added to `default-src`, `script-src` and `img-src`. The tag is injected as an
+external script rather than pasted as Clarity's inline quick-start snippet, so
+`script-src` never needs `unsafe-inline` and the hash-pinned theme bootstrap stays
+protected. `apps/server/test/hosting.test.ts` asserts that the origins appear only
+when a valid project ID is set.
 
 ## Notification history and retention
 

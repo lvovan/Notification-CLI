@@ -39,6 +39,11 @@ export interface CoreResponse {
 /** Somewhere to report failures that must not reach the caller. */
 export interface CoreLogger {
   error(message: string): void;
+  /**
+   * Structured telemetry. Optional, so a host that only wants failures still
+   * satisfies this contract and simply collects no usage data.
+   */
+  info?(message: string): void;
 }
 
 /**
