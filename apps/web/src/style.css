@@ -261,12 +261,19 @@ time {
   opacity: 0.6;
 }
 
+/*
+ * Shares the Logout control's box so the two read as the same kind of
+ * affordance; only the colours differ. The border is transparent rather than
+ * absent so the height matches Logout's bordered box exactly.
+ */
 .app-actions button {
-  border: 0;
-  border-radius: 0.625rem;
-  padding: 0.65rem 0.85rem;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  padding: 0.25rem 0.6rem;
   color: var(--cp-accent-fg);
   background: var(--cp-accent);
+  font-size: 0.8rem;
+  line-height: 1.35;
   cursor: pointer;
 }
 
@@ -282,10 +289,13 @@ time {
   cursor: wait;
 }
 
+/* Starts at the text column so the button lines up with the status lines
+ * above it rather than with the dot. */
 .app-actions {
   display: flex;
-  grid-column: 1 / -1;
+  grid-column: 2 / -1;
   gap: 0.5rem;
+  justify-content: flex-start;
 }
 
 /* The row only carries the install prompt, so collapse it when unavailable. */
@@ -720,14 +730,5 @@ footer {
 @media (max-width: 560px) {
   .shell {
     padding-top: 1.5rem;
-  }
-
-  .app-actions {
-    grid-column: 1 / -1;
-    width: 100%;
-  }
-
-  .app-actions button {
-    flex: 1;
   }
 }
