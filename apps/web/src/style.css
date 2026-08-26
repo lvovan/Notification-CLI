@@ -227,10 +227,6 @@ time {
   background: var(--cp-danger);
 }
 
-#push-status {
-  margin-top: 0.2rem;
-}
-
 /* Large enough to stay an easy tap target while reading as an icon. */
 .bell-toggle {
   justify-self: end;
@@ -311,7 +307,6 @@ time {
 
 .push-status:empty {
   min-height: 0;
-  margin-top: 0;
 }
 
 .push-status.error {
