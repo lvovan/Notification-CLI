@@ -21,22 +21,6 @@ importers:
         specifier: ^7.0.0
         version: 7.3.6(@types/node@22.20.1)(tsx@4.23.12)
 
-  apps/api:
-    dependencies:
-      '@azure/functions':
-        specifier: ^4.7.0
-        version: 4.16.2
-      '@notification-cli/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-    devDependencies:
-      '@azure/data-tables':
-        specifier: ^13.3.2
-        version: 13.3.2
-      tsx:
-        specifier: ^4.19.0
-        version: 4.23.12
-
   apps/server:
     dependencies:
       '@azure/msal-node':
@@ -71,6 +55,9 @@ importers:
       '@types/web-push':
         specifier: ^3.6.4
         version: 3.6.4
+      tsx:
+        specifier: ^4.19.0
+        version: 4.23.12
 
 packages:
 
@@ -109,14 +96,6 @@ packages:
   '@azure/data-tables@13.3.2':
     resolution: {integrity: sha1-M1EoyTt8c7+b//PbKRF+x3i0oS0=, tarball: https://ms-feed-17.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/data-tables/-/data-tables-13.3.2.tgz}
     engines: {node: '>=20.0.0'}
-
-  '@azure/functions-extensions-base@0.3.0':
-    resolution: {integrity: sha1-cGLy8GmLtkdwN4+eev+fd8Ukn04=, tarball: https://ms-feed-17.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/functions-extensions-base/-/functions-extensions-base-0.3.0.tgz}
-    engines: {node: '>=18.0'}
-
-  '@azure/functions@4.16.2':
-    resolution: {integrity: sha1-e/GOBuS1+Ss2i0I8xX/pu2WI788=, tarball: https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/functions/-/functions-4.16.2.tgz}
-    engines: {node: '>=20.0'}
 
   '@azure/logger@1.4.0':
     resolution: {integrity: sha1-PVpif+WaJ27OdIenndkq1cUIwzk=, tarball: https://ms-feed-17.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@azure/logger/-/logger-1.4.0.tgz}
@@ -623,10 +602,6 @@ packages:
   buffer-equal-constant-time@1.0.1:
     resolution: {integrity: sha1-+OcRMvf/5uAaXJaXpMbz5I1cyBk=, tarball: https://ms-feed-17.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/buffer-equal-constant-time/-/buffer-equal-constant-time-1.0.1.tgz}
 
-  cookie@0.7.2:
-    resolution: {integrity: sha1-VWNpxHKiupEPKXmJG1JrNDYjftc=, tarball: https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/cookie/-/cookie-0.7.2.tgz}
-    engines: {node: '>= 0.6'}
-
   debug@4.4.3:
     resolution: {integrity: sha1-xq5DLZvZZiWC/OCHCbA4xY6ePWo=, tarball: https://ms-feed-2.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/debug/-/debug-4.4.3.tgz}
     engines: {node: '>=6.0'}
@@ -912,13 +887,6 @@ snapshots:
       tslib: 2.8.1
     transitivePeerDependencies:
       - supports-color
-
-  '@azure/functions-extensions-base@0.3.0': {}
-
-  '@azure/functions@4.16.2':
-    dependencies:
-      '@azure/functions-extensions-base': 0.3.0
-      cookie: 0.7.2
 
   '@azure/logger@1.4.0':
     dependencies:
@@ -1215,8 +1183,6 @@ snapshots:
   bn.js@4.12.5: {}
 
   buffer-equal-constant-time@1.0.1: {}
-
-  cookie@0.7.2: {}
 
   debug@4.4.3:
     dependencies:

@@ -29,6 +29,9 @@ const TEST_NOTIFICATION_MESSAGE = "Test notification from the web app";
 const TEST_NOTIFICATION_SUCCESS =
   "Test notification sent. Waiting for it to arrive...";
 const TEST_NOTIFICATION_FEEDBACK_MS = 3000;
+const SVG_NS = "http://www.w3.org/2000/svg";
+const TRASH_ICON_PATH =
+  "M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-.7 11H7.7L7 9Zm2 2 .45 7h1.6l-.35-7H9Zm4.3 0-.35 7h1.6L15 11h-1.7Z";
 
 type NotificationCounts = Record<(typeof METRIC_WINDOWS)[number], number>;
 
@@ -72,6 +75,24 @@ const statusCard = requiredElement<HTMLElement>("status").closest(
 );
 if (!statusCard) {
   throw new Error("Missing status card");
+}
+
+function createTrashIcon(): SVGSVGElement {
+  const icon = document.createElementNS(SVG_NS, "svg");
+  icon.setAttribute("class", "heading-action-icon");
+  icon.setAttribute("viewBox", "0 0 24 24");
+  icon.setAttribute("aria-hidden", "true");
+  icon.setAttribute("focusable", "false");
+
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", TRASH_ICON_PATH);
+  icon.append(path);
+
+  return icon;
+}
+
+function restoreClearMessagesIcon(): void {
+  clearMessages.replaceChildren(createTrashIcon());
 }
 
 const appActions = document.createElement("div");
@@ -486,7 +507,7 @@ function disarmClear(): void {
   window.clearTimeout(clearArmTimer);
   clearArmTimer = undefined;
   clearMessages.removeAttribute("data-armed");
-  clearMessages.textContent = "🗑️";
+  restoreClearMessagesIcon();
   clearMessages.setAttribute("aria-label", "Delete all notifications");
   clearMessages.title = "Delete all notifications";
   cancelClear.hidden = true;

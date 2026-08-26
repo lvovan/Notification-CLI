@@ -106,40 +106,34 @@ test("unknown and missing keys are rejected", async () => {
   }
 });
 
-// MCP clients default to sending the key as a token rather than in a custom
-// header. Static Web Apps overwrites Authorization with its own platform token,
-// so x-authorization is the one that survives to the function; both are
-// accepted because the API is only behind that proxy in this deployment.
-test("a token is accepted from either scheme header", async () => {
+// MCP clients default to sending the key as a bearer token; the CLI keeps
+// using the dedicated API-key header.
+test("a key is accepted from x-api-key and Authorization but not x-authorization", async () => {
   const store = keyStore();
   const expected = {
     authorized: true,
     owner: { email: OWNER, userKey: userKey(OWNER) },
   };
 
-  for (const name of ["authorization", "x-authorization"]) {
-    assert.deepEqual(
-      await resolveApiKeyOwner(
-        withHeaders({ [name]: `Bearer ${OWNER_KEY}` }),
-        env,
-        store,
-      ),
-      expected,
-      name,
-    );
-  }
-
-  // The platform token left in Authorization must not shadow a real key.
+  assert.deepEqual(
+    await resolveApiKeyOwner(withHeaders({ "x-api-key": OWNER_KEY }), env, store),
+    expected,
+  );
   assert.deepEqual(
     await resolveApiKeyOwner(
-      withHeaders({
-        "x-authorization": `Bearer ${OWNER_KEY}`,
-        authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.platform.token",
-      }),
+      withHeaders({ authorization: `Bearer ${OWNER_KEY}` }),
       env,
       store,
     ),
     expected,
+  );
+  assert.deepEqual(
+    await resolveApiKeyOwner(
+      withHeaders({ "x-authorization": `Bearer ${OWNER_KEY}` }),
+      env,
+      store,
+    ),
+    { authorized: false },
   );
 });
 test("a key that resolves to any email is accepted without an allowlist", async () => {

@@ -17,27 +17,13 @@ on:
         type: string
         default: notification-cli
       location:
-        description: "Region. Limited to where the Static Web Apps Free tier exists."
-        type: choice
-        options:
-          - westeurope
-          - westus2
-          - centralus
-          - eastus2
-          - eastasia
-        default: westeurope
+        description: "Azure region for the resources."
+        type: string
+        default: francecentral
       name_prefix:
         description: "Prefix for the generated resource names"
         type: string
         default: notification-cli
-      custom_domain:
-        description: "Optional custom domain. Its DNS record must already point at the Static Web App."
-        type: string
-        default: ""
-      deploy_app_service:
-        description: "Also deploy the App Service host (B1, billed hourly) that runs the OAuth authorization server."
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -93,12 +79,10 @@ jobs:
             --parameters \
               namePrefix="${{ inputs.name_prefix }}" \
               location="${{ inputs.location }}" \
-              customDomain="${{ inputs.custom_domain }}" \
               vapidPublicKey="$VAPID_PUBLIC_KEY" \
               vapidPrivateKey="$VAPID_PRIVATE_KEY" \
               vapidSubject="$VAPID_SUBJECT" \
               retentionDays="$RETENTION_DAYS" \
-              deployAppService="${{ inputs.deploy_app_service }}" \
               entraTenantId="$ENTRA_TENANT_ID" \
               entraClientId="$ENTRA_CLIENT_ID" \
               entraClientSecret="$ENTRA_CLIENT_SECRET" \
@@ -124,31 +108,23 @@ jobs:
             --parameters \
               namePrefix="${{ inputs.name_prefix }}" \
               location="${{ inputs.location }}" \
-              customDomain="${{ inputs.custom_domain }}" \
               vapidPublicKey="$VAPID_PUBLIC_KEY" \
               vapidPrivateKey="$VAPID_PRIVATE_KEY" \
               vapidSubject="$VAPID_SUBJECT" \
               retentionDays="$RETENTION_DAYS" \
-              deployAppService="${{ inputs.deploy_app_service }}" \
               entraTenantId="$ENTRA_TENANT_ID" \
               entraClientId="$ENTRA_CLIENT_ID" \
               entraClientSecret="$ENTRA_CLIENT_SECRET" \
               sessionSecret="$SESSION_SECRET" \
             --query properties.outputs \
             --output json)
-          echo "hostname=$(echo "$outputs" | jq -r .staticWebAppHostname.value)" >> "$GITHUB_OUTPUT"
-          echo "swa_name=$(echo "$outputs" | jq -r .staticWebAppName.value)" >> "$GITHUB_OUTPUT"
           echo "push_configured=$(echo "$outputs" | jq -r .pushConfigured.value)" >> "$GITHUB_OUTPUT"
           echo "app_name=$(echo "$outputs" | jq -r .appServiceName.value)" >> "$GITHUB_OUTPUT"
           echo "app_hostname=$(echo "$outputs" | jq -r .appServiceHostname.value)" >> "$GITHUB_OUTPUT"
 
-      # The deployment token is deliberately not printed. Read it separately and
-      # store it as the AZURE_STATIC_WEB_APPS_API_TOKEN secret.
       - name: Summarize deployment
         if: inputs.mode == 'deploy'
         env:
-          HOSTNAME: ${{ steps.deploy.outputs.hostname }}
-          SWA_NAME: ${{ steps.deploy.outputs.swa_name }}
           PUSH_CONFIGURED: ${{ steps.deploy.outputs.push_configured }}
           APP_NAME: ${{ steps.deploy.outputs.app_name }}
           APP_HOSTNAME: ${{ steps.deploy.outputs.app_hostname }}
@@ -156,19 +132,8 @@ jobs:
           {
             echo "## Infrastructure deployed"
             echo ""
-            echo "- Static Web App: \`$SWA_NAME\`"
-            echo "- Hostname: https://$HOSTNAME"
             echo "- Web Push configured: \`$PUSH_CONFIGURED\`"
-            if [ -n "$APP_NAME" ]; then
-              echo "- App Service: \`$APP_NAME\` (https://$APP_HOSTNAME)"
-              echo ""
-              echo "Set the AZURE_APP_SERVICE_NAME variable to \`$APP_NAME\` and store its publish profile as AZURE_APP_SERVICE_PUBLISH_PROFILE."
-            fi
+            echo "- App Service: \`$APP_NAME\` (https://$APP_HOSTNAME)"
             echo ""
-            echo "Refresh the deployment token secret, then run the deploy workflow:"
-            echo ""
-            echo '```'
-            echo "az staticwebapp secrets list --name $SWA_NAME \\"
-            echo "  --query properties.apiKey --output tsv"
-            echo '```'
+            echo "Set the AZURE_APP_SERVICE_NAME variable to \`$APP_NAME\` and store its publish profile as AZURE_APP_SERVICE_PUBLISH_PROFILE."
           } >> "$GITHUB_STEP_SUMMARY"

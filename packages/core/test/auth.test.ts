@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { HttpRequest } from "@azure/functions";
+import type { CoreRequest } from "@notification-cli/core/http";
 import {
   authorizeBrowserRequest,
   normalizeEmail,
@@ -14,7 +14,7 @@ import {
 function requestFor(
   userDetails = " User@Example.COM ",
   overrides: Record<string, unknown> = {},
-): HttpRequest {
+): CoreRequest {
   const principal = {
     identityProvider: "aad",
     userId: "user-id",
@@ -28,7 +28,7 @@ function requestFor(
         JSON.stringify(principal),
       ).toString("base64"),
     }),
-  } as HttpRequest;
+  } as unknown as CoreRequest;
 }
 
 test("normalizes email addresses", () => {
@@ -106,7 +106,9 @@ test("session reports authentication without caching", () => {
     email: "user@example.com",
   });
 
-  const denied = handleSessionRequest({ headers: new Headers() } as HttpRequest);
+  const denied = handleSessionRequest(
+    { headers: new Headers() } as unknown as CoreRequest,
+  );
   assert.equal(denied.status, 401);
   assert.deepEqual(denied.jsonBody, {
     authenticated: false,
@@ -124,7 +126,7 @@ test("negotiate enforces authorization before issuing a token", async () => {
   });
 
   const denied = await handleNegotiateRequest(
-    { headers: new Headers() } as HttpRequest,
+    { headers: new Headers() } as unknown as CoreRequest,
     createClient,
   );
   assert.equal(denied.status, 401);

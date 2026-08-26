@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { HttpRequest } from "@azure/functions";
+import type { CoreRequest } from "@notification-cli/core/http";
 import type { ApiKeyStore } from "@notification-cli/core/api-key-storage";
 import { ConfigurationError } from "@notification-cli/core/configuration";
 import {
@@ -47,11 +47,11 @@ function request(
   headers: Record<string, string> = {
     "x-ms-client-principal": principalHeader(),
   },
-): HttpRequest {
+): CoreRequest {
   return {
     headers: new Headers(headers),
     json: async () => body,
-  } as unknown as HttpRequest;
+  } as unknown as CoreRequest;
 }
 
 class MemoryStore implements PushSubscriptionStore {

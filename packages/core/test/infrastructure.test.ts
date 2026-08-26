@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { repoPath } from "./paths.js";
 import test from "node:test";
 import { API_KEYS_TABLE } from "@notification-cli/core/api-key-storage";
 import {
@@ -18,8 +18,9 @@ import { PUSH_SUBSCRIPTIONS_TABLE } from "@notification-cli/core/push-storage";
 import { STORAGE_CONNECTION_STRING_ENV } from "@notification-cli/core/table-storage";
 import { CONNECTION_STRING_ENV } from "@notification-cli/core/web-pubsub";
 
-const templatePath = resolve("../../infra/main.bicep");
-const workflowPath = resolve("../../.github/workflows/infrastructure.yml");
+const templatePath = repoPath("infra", "main.bicep");
+const workflowPath = repoPath(".github", "workflows", "infrastructure.yml");
+const deployWorkflowPath = repoPath(".github", "workflows", "deploy.yml");
 
 test("the template supplies every setting the API reads", async () => {
   const template = await readFile(templatePath, "utf8");
@@ -82,26 +83,40 @@ test("every resource stays on a free or lowest-cost tier", async () => {
   const template = await readFile(templatePath, "utf8");
 
   assert.match(template, /name: 'Free_F1'/);
-  assert.match(template, /name: 'Free'\s+tier: 'Free'/);
+  assert.match(template, /name: 'B1'\s+tier: 'Basic'/);
   assert.match(template, /name: 'Standard_LRS'/);
-  // The frontend ships its own routing, auth and cache rules.
-  assert.match(template, /allowConfigFileUpdates: true/);
 });
 
-// The App Service host costs money, so it must never appear unless it was
-// explicitly asked for. Both hosts read the same settings, which is what makes
-// them interchangeable.
-test("the App Service host is optional and shares the API settings", async () => {
+test("the App Service host is always deployed and has the API settings", async () => {
   const template = await readFile(templatePath, "utf8");
 
-  assert.match(template, /param deployAppService bool = false/);
-  assert.match(template, /serverfarms@[\d-]+' = if \(deployAppService\)/);
-  assert.match(template, /sites@[\d-]+' = if \(deployAppService\)/);
+  assert.ok(!template.includes("deployAppService"));
+  assert.match(template, /serverfarms@[\d-]+' = \{/);
+  assert.match(template, /sites@[\d-]+' = \{/);
   assert.match(template, /appSettings: concat\(sharedSettings, \[/);
-  assert.match(
-    template,
-    /properties: toObject\(sharedSettings, setting => setting\.name, setting => setting\.value\)/,
-  );
+});
+
+test("the Static Web App resources stay removed", async () => {
+  const template = await readFile(templatePath, "utf8");
+  const infrastructureWorkflow = await readFile(workflowPath, "utf8");
+  const deployWorkflow = await readFile(deployWorkflowPath, "utf8");
+
+  for (const removed of [
+    "Microsoft.Web/staticSites",
+    "staticWebAppName",
+    "staticWebAppHostname",
+    "customDomain",
+  ]) {
+    assert.ok(!template.includes(removed), `infra/main.bicep still contains ${removed}`);
+  }
+
+  for (const workflow of [infrastructureWorkflow, deployWorkflow]) {
+    assert.ok(!workflow.includes("AZURE_STATIC_WEB_APPS_API_TOKEN"));
+    assert.ok(!workflow.includes("Azure/static-web-apps-deploy"));
+    assert.ok(!workflow.includes("staticWebAppName"));
+    assert.ok(!workflow.includes("staticWebAppHostname"));
+    assert.ok(!workflow.includes("customDomain"));
+  }
 });
 
 test("provisioning never runs automatically", async () => {
@@ -123,4 +138,14 @@ test("provisioning never runs automatically", async () => {
     /(GITHUB_OUTPUT|GITHUB_ENV)[\s\S]{0,120}apiKey/.test(workflow) ||
     /apiKey[\s\S]{0,120}(GITHUB_OUTPUT|GITHUB_ENV)/.test(workflow);
   assert.ok(!capturesToken, "the deployment token must not be captured");
+});
+
+test("deploying requires an App Service name", async () => {
+  const workflow = await readFile(deployWorkflowPath, "utf8");
+
+  assert.match(
+    workflow,
+    /::error::AZURE_APP_SERVICE_NAME is empty\. Set it to the App Service site name before deploying\./,
+  );
+  assert.ok(!workflow.includes("if: ${{ vars.AZURE_APP_SERVICE_NAME != '' }}"));
 });

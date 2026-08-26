@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { repoPath } from "./paths.js";
 import test from "node:test";
 
-const htmlPath = resolve("../web/index.html");
-const mainPath = resolve("../web/src/main.ts");
-const stylePath = resolve("../web/src/style.css");
-const workerPath = resolve("../web/public/service-worker.js");
+const htmlPath = repoPath("apps", "web", "index.html");
+const mainPath = repoPath("apps", "web", "src", "main.ts");
+const stylePath = repoPath("apps", "web", "src", "style.css");
+const workerPath = repoPath("apps", "web", "public", "service-worker.js");
 
 function ruleBody(style: string, selector: string): string {
   const match = new RegExp(

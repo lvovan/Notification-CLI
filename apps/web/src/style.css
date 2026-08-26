@@ -485,9 +485,11 @@ a {
 }
 
 .heading-action {
+  box-sizing: border-box;
   display: grid;
   width: 1.9rem;
   height: 1.9rem;
+  padding: 0;
   place-items: center;
   border: 1px solid var(--cp-border);
   border-radius: 0.625rem;
@@ -496,6 +498,13 @@ a {
   font-size: 0.95rem;
   line-height: 1;
   cursor: pointer;
+}
+
+.heading-action-icon {
+  display: block;
+  width: 1.05em;
+  height: 1.05em;
+  fill: currentColor;
 }
 
 .heading-action:hover:not(:disabled),

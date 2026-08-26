@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { HttpRequest } from "@azure/functions";
+import type { CoreRequest } from "@notification-cli/core/http";
 import type { CoreResponse } from "@notification-cli/core/http";
 import { ConfigurationError } from "@notification-cli/core/configuration";
 import { fanOutNotification } from "@notification-cli/core/fanout";
@@ -51,18 +51,18 @@ function principalHeader(email = OWNER): string {
 function request(
   headers: Record<string, string>,
   url = "https://example.com/api/notifications",
-): HttpRequest {
+): CoreRequest {
   return {
     headers: new Headers(headers),
     url,
     query: new URL(url).searchParams,
-  } as unknown as HttpRequest;
+  } as unknown as CoreRequest;
 }
 
 function signedIn(
   email = OWNER,
   url = "https://example.com/api/notifications",
-): HttpRequest {
+): CoreRequest {
   return request({ "x-ms-client-principal": principalHeader(email) }, url);
 }
 

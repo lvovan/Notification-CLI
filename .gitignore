@@ -3,7 +3,6 @@ dist/
 .env
 .env.*
 !.env.example
-apps/api/local.settings.json
 *.msi
 *.exe
 .DS_Store

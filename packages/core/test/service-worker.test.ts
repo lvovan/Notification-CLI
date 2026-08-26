@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { repoPath } from "./paths.js";
 import test from "node:test";
 
 interface WorkerEvent {
@@ -12,7 +12,7 @@ type WorkerHandler = (event: WorkerEvent) => void;
 
 async function loadPushHandler(visible: boolean) {
   const source = await readFile(
-    resolve("../web/public/service-worker.js"),
+    repoPath("apps", "web", "public", "service-worker.js"),
     "utf8",
   );
   const handlers = new Map<string, WorkerHandler>();
@@ -56,10 +56,10 @@ async function loadPushHandler(visible: boolean) {
 
 test("installation never requests authentication endpoints and tolerates missing assets", async () => {
   const source = await readFile(
-    resolve("../web/public/service-worker.js"),
+    repoPath("apps", "web", "public", "service-worker.js"),
     "utf8",
   );
-  const html = await readFile(resolve("../web/index.html"), "utf8");
+  const html = await readFile(repoPath("apps", "web", "index.html"), "utf8");
   assert.match(html, /href="\/\.auth\//);
 
   const handlers = new Map<string, WorkerHandler>();

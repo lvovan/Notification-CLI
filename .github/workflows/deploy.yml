@@ -62,14 +62,21 @@ jobs:
           $stray = Get-ChildItem artifacts -Filter *.cab -ErrorAction SilentlyContinue
           if ($stray) { throw "unexpected external cabinet: $($stray.Name -join ', ')" }
 
-      - name: Upload CLI installers
+      - name: Upload x64 CLI installer
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: NotificationCLI-windows
+          name: NotificationCLI-windows-x64
           path: |
             artifacts/notify-x64.exe
-            artifacts/notify-arm64.exe
             artifacts/NotificationCLI-x64.msi
+          if-no-files-found: error
+
+      - name: Upload ARM64 CLI installer
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: NotificationCLI-windows-arm64
+          path: |
+            artifacts/notify-arm64.exe
             artifacts/NotificationCLI-arm64.msi
           if-no-files-found: error
 
@@ -160,31 +167,20 @@ jobs:
           pnpm package
           pnpm smoke:package
 
-      - name: Deploy Static Web App
-        uses: Azure/static-web-apps-deploy@4d27395796ac319302594769cfe812bd207490b1 # v1
-        with:
-          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
-          action: upload
-          app_location: dist/web
-          api_location: dist/api
-          output_location: ""
-          skip_app_build: true
-          skip_api_build: true
-
-      # The App Service host serves the same frontend and the same API, plus
-      # the OAuth authorization server that MCP clients need. It is deployed
-      # only once AZURE_APP_SERVICE_NAME names a site.
-      #
       # The deploy action reports every disagreement between the site name and
       # the profile as one opaque "publish profile is invalid", so the profile
       # is checked here first, where the message can name the actual problem.
       # Only the site name is ever printed; it is not a secret.
       - name: Check the publish profile
-        if: ${{ vars.AZURE_APP_SERVICE_NAME != '' }}
         env:
           PROFILE: ${{ secrets.AZURE_APP_SERVICE_PUBLISH_PROFILE }}
           APP_NAME: ${{ vars.AZURE_APP_SERVICE_NAME }}
         run: |
+          if [ -z "$APP_NAME" ]; then
+            echo "::error::AZURE_APP_SERVICE_NAME is empty. Set it to the App Service site name before deploying."
+            exit 1
+          fi
+
           if [ -z "$PROFILE" ]; then
             echo "::error::AZURE_APP_SERVICE_PUBLISH_PROFILE is empty."
             exit 1
@@ -212,7 +208,6 @@ jobs:
           echo "Publishing to $site."
 
       - name: Deploy App Service
-        if: ${{ vars.AZURE_APP_SERVICE_NAME != '' }}
         uses: Azure/webapps-deploy@02a81bead70021f5284939794bcec79c271ab383 # v3.0.8
         with:
           app-name: ${{ vars.AZURE_APP_SERVICE_NAME }}

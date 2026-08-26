@@ -1,21 +1,21 @@
 /*
   Notification CLI infrastructure.
 
-  Creates every Azure resource the solution needs, all on Free tiers:
+  Creates every Azure resource the solution needs:
 
     - Azure Web PubSub (Free_F1): real-time transport to open browser tabs.
     - Azure Storage (Standard_LRS): four tables holding per-user push
       subscriptions, notification metrics, retained notification history and
       the API keys minted for each authorized account.
-    - Azure Static Web App (Free): hosts the PWA and the Functions API, and
-      provides the built-in Microsoft Entra ID sign-in that gates the frontend.
+    - Azure App Service (B1): hosts the PWA, API and OAuth authorization
+      server.
 
-  The template also writes the Static Web App's environment variables, wiring
-  in the connection strings of the resources above so no secret has to be
-  copied by hand.
+  The template also writes the App Service environment variables, wiring in the
+  connection strings of the resources above so no secret has to be copied by
+  hand.
 
   Application code is NOT deployed here. Run the deploy workflow afterwards; it
-  uploads the built frontend and API using the Static Web App deployment token.
+  uploads the built server package to App Service.
 */
 
 @description('Prefix for generated resource names. Lower-case letters and digits work best, because the storage account name is derived from it.')
@@ -23,15 +23,8 @@
 @maxLength(24)
 param namePrefix string = 'notification-cli'
 
-@description('Region for every resource. Restricted to the regions where the Static Web Apps Free tier is available.')
-@allowed([
-  'westus2'
-  'centralus'
-  'eastus2'
-  'westeurope'
-  'eastasia'
-])
-param location string = 'westeurope'
+@description('Azure region for every resource. Defaults to the resource group location; existing deployments must keep using the region their resources were created in.')
+param location string = resourceGroup().location
 
 @description('URL-safe VAPID public key handed to authorized browsers. Leave empty to deploy without Web Push; live delivery to open tabs still works.')
 param vapidPublicKey string = ''
@@ -47,12 +40,6 @@ param vapidSubject string = ''
 @minValue(1)
 @maxValue(365)
 param retentionDays int = 7
-
-@description('Optional custom domain, for example "notify.example.com". The DNS record must already point at the Static Web App, otherwise validation blocks the deployment. Leave empty to use the generated azurestaticapps.net hostname.')
-param customDomain string = ''
-
-@description('Deploy the App Service host alongside the Static Web App. It serves the same frontend and API, and additionally hosts the OAuth authorization server that MCP clients need.')
-param deployAppService bool = false
 
 @description('Directory (tenant) ID of the Entra application the App Service host signs users in with.')
 param entraTenantId string = ''
@@ -75,7 +62,6 @@ var storageAccountName = take(
   24
 )
 var webPubSubName = '${namePrefix}-wps'
-var staticWebAppName = '${namePrefix}-swa'
 var appServicePlanName = '${namePrefix}-plan'
 var appServiceName = '${namePrefix}-wa'
 
@@ -137,27 +123,8 @@ resource webPubSub 'Microsoft.SignalRService/webPubSub@2024-03-01' = {
   }
 }
 
-resource staticWebApp 'Microsoft.Web/staticSites@2024-11-01' = {
-  name: staticWebAppName
-  location: location
-  sku: {
-    name: 'Free'
-    tier: 'Free'
-  }
-  properties: {
-    // "Custom" stops Azure from generating its own GitHub workflow: this
-    // repository deploys with the Azure/static-web-apps-deploy action instead.
-    provider: 'Custom'
-    // Required so the staticwebapp.config.json shipped with the frontend
-    // controls routing, authentication and the cache headers the PWA needs.
-    allowConfigFileUpdates: true
-    stagingEnvironmentPolicy: 'Disabled'
-    enterpriseGradeCdnStatus: 'Disabled'
-  }
-}
-
-// Every setting both hosts need. The App Service host adds the sign-in and
-// session settings on top, because it authenticates users itself.
+// Every setting the App Service host needs. It adds the sign-in and session
+// settings below, because it authenticates users itself.
 var sharedSettings = concat(
   [
     {
@@ -191,34 +158,20 @@ var sharedSettings = concat(
     : []
 )
 
-// Replaces the complete application settings collection on every deployment,
-// so any setting added by hand in the portal is removed. Add new settings
-// here instead.
-resource staticWebAppSettings 'Microsoft.Web/staticSites/config@2024-11-01' = {
-  parent: staticWebApp
-  name: 'appsettings'
-  properties: toObject(sharedSettings, setting => setting.name, setting => setting.value)
-}
-
-// Validation polls DNS, so an unresolvable record leaves the deployment
-// running until it times out. Create the CNAME first.
-resource domain 'Microsoft.Web/staticSites/customDomains@2024-11-01' = if (!empty(customDomain)) {
-  parent: staticWebApp
-  name: customDomain
-}
-
 /*
   The App Service host.
 
-  It exists because the Model Context Protocol requires clients to present
-  `Authorization: Bearer <token>`, and Static Web Apps replaces that header
-  with its own platform token before a managed function is invoked. OAuth can
-  therefore never work behind the Static Web App, whatever the API does.
+  It exists because the Model Context Protocol requires the real bearer
+  authorization header, while Static Web Apps replaced that header with its
+  own platform token before a managed function was invoked. OAuth could
+  therefore never work behind the Static Web App, whatever the API did.
 
   B1 is the smallest tier that supports Always On and a free managed
-  certificate, both of which this host needs.
+  certificate, both of which this host needs. Custom domains and certificates
+  stay manually managed because the managed-certificate flow is not reliably
+  single-pass declarative.
 */
-resource appServicePlan 'Microsoft.Web/serverfarms@2024-11-01' = if (deployAppService) {
+resource appServicePlan 'Microsoft.Web/serverfarms@2024-11-01' = {
   name: appServicePlanName
   location: location
   sku: {
@@ -232,7 +185,7 @@ resource appServicePlan 'Microsoft.Web/serverfarms@2024-11-01' = if (deployAppSe
   }
 }
 
-resource appService 'Microsoft.Web/sites@2024-11-01' = if (deployAppService) {
+resource appService 'Microsoft.Web/sites@2024-11-01' = {
   name: appServiceName
   location: location
   kind: 'app,linux'
@@ -279,12 +232,6 @@ resource appService 'Microsoft.Web/sites@2024-11-01' = if (deployAppService) {
   }
 }
 
-@description('Name of the Static Web App, needed to read its deployment token.')
-output staticWebAppName string = staticWebApp.name
-
-@description('Generated hostname of the Static Web App. A configured custom domain serves the same content.')
-output staticWebAppHostname string = staticWebApp.properties.defaultHostname
-
 @description('Name of the Web PubSub instance backing real-time delivery.')
 output webPubSubName string = webPubSub.name
 
@@ -294,11 +241,11 @@ output storageAccountName string = storageAccount.name
 @description('Whether Web Push settings were supplied. When false, notifications only reach open browser tabs.')
 output pushConfigured bool = pushConfigured
 
-@description('Name of the App Service host, empty when it was not deployed.')
-output appServiceName string = deployAppService ? appServiceName : ''
+@description('Name of the App Service host.')
+output appServiceName string = appService.name
 
-@description('Hostname of the App Service host, empty when it was not deployed. This is the origin MCP clients discover the authorization server on.')
-output appServiceHostname string = deployAppService ? appService!.properties.defaultHostName : ''
+@description('Hostname of the App Service host. This is the origin MCP clients discover the authorization server on.')
+output appServiceHostname string = appService.properties.defaultHostName
 
 @description('Subject of the federated credential to add when no client secret is used.')
-output appServicePrincipalId string = deployAppService ? appService!.identity.principalId : ''
+output appServicePrincipalId string = appService.identity.principalId

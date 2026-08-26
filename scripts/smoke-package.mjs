@@ -1,24 +1,31 @@
 import { access, readFile } from "node:fs/promises";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 
 const requiredFiles = [
-  "dist/api/index.js",
-  "dist/api/host.json",
-  "dist/api/package.json",
-  "dist/web/index.html",
-  "dist/web/icon-192.png",
-  "dist/web/icon-512.png",
-  "dist/web/icon-maskable-512.png",
-  "dist/web/apple-touch-icon.png",
-  "dist/web/service-worker.js",
-  "dist/web/staticwebapp.config.json",
   "dist/server/dist/main.js",
   "dist/server/package.json",
   "dist/server/web/index.html",
+  "dist/server/web/icon-192.png",
+  "dist/server/web/icon-512.png",
+  "dist/server/web/icon-maskable-512.png",
+  "dist/server/web/apple-touch-icon.png",
+  "dist/server/web/manifest.webmanifest",
+  "dist/server/web/service-worker.js",
 ];
 
 await Promise.all(requiredFiles.map((file) => access(file)));
+await Promise.all(
+  ["api", "web"].map(async (name) => {
+    const file = `dist/${name}`;
+    try {
+      await access(file);
+    } catch {
+      return;
+    }
+    throw new Error(`${file} is obsolete and must not be packaged`);
+  }),
+);
 
 // App Service runs `npm start`. Without it the package deploys cleanly and
 // then serves the platform's welcome page instead of the application.
@@ -28,15 +35,8 @@ const serverManifest = JSON.parse(
 if (serverManifest.scripts?.start !== "node dist/main.js") {
   throw new Error("Packaged server has no start script for App Service");
 }
-
-const apiStartup = spawnSync(process.execPath, ["dist/api/index.js"], {
-  encoding: "utf8",
-  timeout: 15_000,
-});
-if (apiStartup.error || apiStartup.status !== 0) {
-  throw new Error(
-    `Packaged API failed to start: ${apiStartup.error?.message ?? apiStartup.stderr}`,
-  );
+if (serverManifest.type !== "module" || serverManifest.main !== "dist/main.js") {
+  throw new Error("Packaged server manifest does not point at the ESM entrypoint");
 }
 
 await smokeServer();
@@ -44,9 +44,9 @@ await smokeServer();
 console.log("Package smoke test passed");
 
 /**
- * Starts the packaged App Service host and asks it for the OAuth metadata
- * MCP clients discover it by. That exercises the bundle, the routing table and
- * the static root in one request, without needing any Azure resource.
+ * Starts the packaged App Service host and checks the frontend gate plus OAuth
+ * metadata. File assertions above prove the static web root is bundled without
+ * needing a live Entra sign-in.
  */
 async function smokeServer() {
   const port = 8791;
@@ -72,6 +72,24 @@ async function smokeServer() {
         throw new Error(`Packaged server exited: ${errors.join("")}`);
       }),
     ]);
+
+    const frontend = await fetch(`http://127.0.0.1:${port}/`, {
+      redirect: "manual",
+    });
+    if (
+      frontend.status !== 302 ||
+      frontend.headers.get("location") !==
+        "/.auth/login/aad?post_login_redirect_uri=%2F"
+    ) {
+      throw new Error("Packaged server did not gate the web frontend");
+    }
+
+    const worker = await fetch(`http://127.0.0.1:${port}/service-worker.js`, {
+      redirect: "manual",
+    });
+    if (worker.status !== 302) {
+      throw new Error("Packaged server did not gate the service worker");
+    }
 
     const response = await fetch(
       `http://127.0.0.1:${port}/.well-known/oauth-protected-resource`,

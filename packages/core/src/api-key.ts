@@ -20,14 +20,12 @@ const BEARER_SCHEME = /^Bearer\s+(.+)$/i;
 /**
  * Headers the key is accepted from, in the order they are consulted.
  *
- * `x-api-key` is what the CLI sends. `Authorization: Bearer <key>` is what
- * most MCP clients send by default, but Static Web Apps replaces that header
- * with its own platform token on the way to a managed function, so a token sent
- * that way never arrives. `x-authorization` carries the same
- * `Bearer <key>` value and is forwarded untouched, which makes it the one to
- * use behind Static Web Apps.
+ * `x-api-key` is what the CLI sends because it can use a dedicated API-key
+ * header. `Authorization: Bearer` is what OAuth-based MCP clients send by
+ * default and is also accepted for API keys when a client cannot configure a
+ * custom header.
  */
-const KEY_HEADERS = ["x-api-key", "x-authorization", "authorization"] as const;
+const KEY_HEADERS = ["x-api-key", "authorization"] as const;
 
 /** Extracts the key from whichever accepted header carries it. */
 export function presentedApiKey(

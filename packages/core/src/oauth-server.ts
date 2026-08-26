@@ -163,21 +163,31 @@ function escapeHtml(value: string): string {
   );
 }
 
-/**
- * The consent page carries its own policy. It has no scripts at all, so
- * inline styling cannot be an injection vector, and `form-action 'self'`
- * keeps the decision on this origin.
- */
-const CONSENT_CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+const PAGE_CSP_PREFIX = "default-src 'none'; style-src 'unsafe-inline'";
+const PAGE_CSP_SUFFIX = "base-uri 'none'; frame-ancestors 'none'";
+const ERROR_PAGE_CSP = `${PAGE_CSP_PREFIX}; form-action 'none'; ${PAGE_CSP_SUFFIX}`;
 
-function page(status: number, title: string, content: string): CoreResponse {
+function consentPageCsp(redirectUri: string): string {
+  const target = new URL(redirectUri);
+  const formAction =
+    target.protocol === "http:" || target.protocol === "https:"
+      ? target.origin
+      : target.protocol;
+  return `${PAGE_CSP_PREFIX}; form-action 'self' ${formAction}; ${PAGE_CSP_SUFFIX}`;
+}
+
+function page(
+  status: number,
+  title: string,
+  content: string,
+  csp: string = ERROR_PAGE_CSP,
+): CoreResponse {
   return {
     status,
     headers: {
       ...NO_STORE,
       "Content-Type": "text/html; charset=utf-8",
-      "Content-Security-Policy": CONSENT_CSP,
+      "Content-Security-Policy": csp,
     },
     body: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>body{font:16px/1.5 system-ui,sans-serif;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center;background:#101014;color:#f2f2f7}main{max-width:26rem;padding:2rem;background:#1c1c22;border-radius:12px}h1{font-size:1.25rem;margin:0 0 1rem}p{margin:0 0 1rem;color:#c9c9d1}strong{color:#fff}form{display:flex;gap:.75rem;margin-top:1.5rem}button{flex:1;padding:.75rem;border-radius:8px;border:0;font:inherit;cursor:pointer}button[value=allow]{background:#4f8cff;color:#fff}button[value=deny]{background:#2a2a33;color:#f2f2f7}</style></head><body><main>${content}</main></body></html>`,
   };
@@ -343,6 +353,7 @@ export async function handleAuthorizeRequest(
     200,
     "Authorize access",
     `<h1>Authorize access</h1><p><strong>${escapeHtml(name)}</strong> is asking to send notifications as <strong>${escapeHtml(authorization.email)}</strong>.</p><p>It will be able to send you notifications until you revoke it. It cannot read your notification history.</p><form method="post" action="${escapeHtml(url.pathname)}">${hiddenFields(request)}<button name="decision" value="deny" type="submit">Deny</button><button name="decision" value="allow" type="submit">Allow</button></form>`,
+    consentPageCsp(validation.parameters.redirectUri),
   );
 }
 

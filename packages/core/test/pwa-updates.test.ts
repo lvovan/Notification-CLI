@@ -1,16 +1,15 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { repoPath } from "./paths.js";
 import test from "node:test";
 
-const workerPath = resolve("../web/public/service-worker.js");
-const mainPath = resolve("../web/src/main.ts");
-const configPath = resolve("../web/public/staticwebapp.config.json");
+const workerPath = repoPath("apps", "web", "public", "service-worker.js");
+const mainPath = repoPath("apps", "web", "src", "main.ts");
 
 test("the worker carries a build stamp so deployments are not byte-identical", async () => {
   const [worker, viteConfig] = await Promise.all([
     readFile(workerPath, "utf8"),
-    readFile(resolve("../web/vite.config.ts"), "utf8"),
+    readFile(repoPath("apps", "web", "vite.config.ts"), "utf8"),
   ]);
 
   // A worker whose bytes never change is discarded by browsers as "no update",
@@ -48,32 +47,4 @@ test("every plausible iOS resume signal triggers an update check", async () => {
   }
   assert.match(main, /setInterval\(checkForUpdate, UPDATE_CHECK_INTERVAL_MS\)/);
   assert.match(main, /UPDATE_CHECK_THROTTLE_MS/);
-});
-
-test("the shell and worker are never served from a stale HTTP cache", async () => {
-  const config = JSON.parse(await readFile(configPath, "utf8")) as {
-    routes: Array<{
-      route: string;
-      allowedRoles: string[];
-      headers?: Record<string, string>;
-    }>;
-  };
-
-  const catchAll = config.routes.findIndex(
-    (candidate) => candidate.route === "/*",
-  );
-  for (const path of ["/service-worker.js", "/index.html", "/"]) {
-    const index = config.routes.findIndex(
-      (candidate) => candidate.route === path,
-    );
-    assert.ok(index >= 0, `missing route for ${path}`);
-    assert.ok(index < catchAll, `${path} must precede the catch-all route`);
-    assert.equal(
-      config.routes[index]?.headers?.["Cache-Control"],
-      "no-cache",
-      `${path} must not be cached by the browser`,
-    );
-    // These routes must stay behind Microsoft authentication.
-    assert.deepEqual(config.routes[index]?.allowedRoles, ["authenticated"]);
-  }
 });

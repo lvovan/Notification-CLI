@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { repoPath } from "./paths.js";
 import test from "node:test";
 
-const installerPath = resolve("../../installer/NotificationCLI.wxs");
-const workflowPath = resolve("../../.github/workflows/deploy.yml");
+const installerPath = repoPath("installer", "NotificationCLI.wxs");
+const workflowPath = repoPath(".github", "workflows", "deploy.yml");
 
 const architectures = ["x64", "arm64"];
 
@@ -35,15 +35,59 @@ test("the installer puts notify.exe on the PATH", async () => {
 
 test("the workflow ships an executable and an installer per architecture", async () => {
   const workflow = await readFile(workflowPath, "utf8");
+  const windowsArtifactBlocks = [
+    ...workflow.matchAll(
+      /^([^\S\r\n]*)- name: .*(?:\r?\n(?!\1- name: ).*)*/gm,
+    ),
+  ]
+    .map((match) => match[0])
+    .filter(
+      (step) =>
+        step.includes("uses: actions/upload-artifact@") &&
+        /^\s+name: NotificationCLI-windows[^\r\n]*/m.test(step),
+    );
+
+  assert.equal(
+    windowsArtifactBlocks.length,
+    architectures.length,
+    `expected ${architectures.length} NotificationCLI-windows upload-artifact steps`,
+  );
 
   for (const architecture of architectures) {
+    const artifactName = `NotificationCLI-windows-${architecture}`;
+    const artifact = windowsArtifactBlocks.find((step) =>
+      new RegExp(`^\\s+name: ${artifactName}$`, "m").test(step),
+    );
+    assert.ok(artifact, `missing ${artifactName} artifact`);
+    const payload = artifact;
+
     assert.ok(
-      workflow.includes(`artifacts/notify-${architecture}.exe`),
+      payload.includes(`artifacts/notify-${architecture}.exe`),
       `missing executable for ${architecture}`,
     );
     assert.ok(
-      workflow.includes(`artifacts/NotificationCLI-${architecture}.msi`),
+      payload.includes(`artifacts/NotificationCLI-${architecture}.msi`),
       `missing installer for ${architecture}`,
+    );
+    assert.match(
+      artifact,
+      /^\s+if-no-files-found: error$/m,
+      `${artifactName} must fail when files are missing`,
+    );
+  }
+
+  for (const artifact of windowsArtifactBlocks) {
+    const artifactName =
+      /^\s+name: (NotificationCLI-windows[^\r\n]*)/m.exec(artifact)?.[1] ?? "";
+    const payloadArchitectures = architectures.filter(
+      (architecture) =>
+        artifact.includes(`artifacts/notify-${architecture}.exe`) ||
+        artifact.includes(`artifacts/NotificationCLI-${architecture}.msi`),
+    );
+    assert.equal(
+      payloadArchitectures.length,
+      1,
+      `${artifactName} must not publish multiple Windows architectures`,
     );
   }
 

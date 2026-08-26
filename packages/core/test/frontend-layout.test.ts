@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { repoPath } from "./paths.js";
 import test from "node:test";
 
-const htmlPath = resolve("../web/index.html");
-const mainPath = resolve("../web/src/main.ts");
-const stylePath = resolve("../web/src/style.css");
+const htmlPath = repoPath("apps", "web", "index.html");
+const mainPath = repoPath("apps", "web", "src", "main.ts");
+const stylePath = repoPath("apps", "web", "src", "style.css");
 
 function ruleBody(style: string, selector: string): string {
   const match = new RegExp(
@@ -99,17 +99,33 @@ test("refreshing restarts paging from the newest notification", async () => {
 });
 
 test("the notifications heading carries a right-aligned delete control", async () => {
-  const [html, style] = await Promise.all([
+  const [html, style, main] = await Promise.all([
     readFile(htmlPath, "utf8"),
     readFile(stylePath, "utf8"),
+    readFile(mainPath, "utf8"),
   ]);
 
   const heading =
     /<div class="section-heading">([\s\S]*?)<\/div>/.exec(html)?.[1] ?? "";
+  const trashPath =
+    /id="clear-messages"[\s\S]*?<path d="([^"]+)"><\/path>/.exec(
+      heading,
+    )?.[1] ?? "";
+  const mainTrashPath =
+    /const TRASH_ICON_PATH =\s*\r?\n\s*"([^"]+)";/.exec(main)?.[1] ?? "";
   assert.match(heading, /id="clear-messages"/);
   assert.match(heading, /class="heading-action"/);
   assert.match(heading, /aria-label="Delete all notifications"/);
-  assert.match(heading, /\u{1F5D1}/u);
+  assert.match(
+    heading,
+    /<svg class="heading-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">/,
+  );
+  assert.ok(
+    !heading.includes("\u{1F5D1}"),
+    "delete icon must not use emoji metrics",
+  );
+  assert.ok(trashPath, "missing inline trash path");
+  assert.equal(trashPath, mainTrashPath);
   // The heading comes first and the row spreads them apart, which is what puts
   // the control on the right without any extra positioning.
   assert.ok(
@@ -157,15 +173,37 @@ test("an equally sized cancel button sits beside the delete confirmation", async
   // Same class, so the square sizing is shared rather than duplicated, and the
   // cancel control follows the delete one.
   assert.match(actions, /id="cancel-clear"[\s\S]*?class="heading-action"/);
-  assert.match(actions, /\u2715/);
+  assert.match(
+    actions,
+    /id="cancel-clear"[\s\S]*?<svg class="heading-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">/,
+  );
+  assert.ok(!actions.includes("\u2715"), "cancel icon must not use glyph metrics");
   assert.ok(actions.indexOf("clear-messages") < actions.indexOf("cancel-clear"));
   assert.match(actions, /id="cancel-clear"[\s\S]*?hidden/);
 
   // The shared class sets `display: grid`, which would otherwise win over the
   // hidden attribute and leave the cancel button on screen.
   assert.match(style, /\.heading-action\[hidden\]\s*\{\s*display:\s*none;/);
+  assert.match(ruleBody(style, ".heading-action"), /box-sizing:\s*border-box/);
+  assert.match(ruleBody(style, ".heading-action"), /padding:\s*0/);
+  assert.match(
+    style,
+    /\.heading-action\[data-armed="true"\]\s*\{[\s\S]*?padding:\s*0 0\.7rem/,
+  );
+  assert.match(ruleBody(style, ".heading-action-icon"), /display:\s*block/);
+  assert.match(ruleBody(style, ".heading-action-icon"), /width:\s*1\.05em/);
+  assert.match(ruleBody(style, ".heading-action-icon"), /height:\s*1\.05em/);
+  assert.match(ruleBody(style, ".heading-action-icon"), /fill:\s*currentColor/);
 
   // Visible only while the delete is armed, and cancelling never deletes.
+  assert.match(main, /clearMessages\.replaceChildren\(createTrashIcon\(\)\)/);
+  assert.ok(!main.includes('clearMessages.textContent = "🗑️"'));
+  assert.match(main, /clearMessages\.textContent = "Confirm"/);
+  assert.deepEqual(
+    main.match(/clearMessages\.textContent = /g),
+    ["clearMessages.textContent = "],
+  );
+  assert.ok(!main.includes("cancelClear.textContent"));
   assert.match(main, /cancelClear\.hidden = false/);
   assert.match(main, /cancelClear\.hidden = true/);
   assert.match(main, /cancelClear\.addEventListener\("click", disarmClear\)/);

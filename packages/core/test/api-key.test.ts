@@ -258,18 +258,17 @@ test("the key is read from any accepted header", () => {
   const cases: Array<[Record<string, string>, string | null]> = [
     [{ "x-api-key": "ncli_direct" }, "ncli_direct"],
     [{ authorization: "Bearer ncli_token" }, "ncli_token"],
-    [{ "x-authorization": "Bearer ncli_token" }, "ncli_token"],
+    [{ "x-authorization": "Bearer ncli_token" }, null],
     // Clients are inconsistent about the scheme's casing and spacing.
     [{ authorization: "bearer   ncli_token  " }, "ncli_token"],
-    // Static Web Apps overwrites Authorization with its own platform token, so
-    // x-authorization has to win over whatever is left in it.
+    // The retired Static Web Apps workaround must not shadow Authorization.
     [
-      { "x-authorization": "Bearer ncli_token", authorization: "Bearer ey.plat.form" },
+      { "x-authorization": "Bearer ncli_ignored", authorization: "Bearer ncli_token" },
       "ncli_token",
     ],
     // The dedicated header wins so a client can carry an unrelated token.
     [
-      { "x-api-key": "ncli_direct", authorization: "Bearer ncli_token" },
+      { "x-api-key": "ncli_direct", authorization: "Bearer unrelated" },
       "ncli_direct",
     ],
     [{}, null],
@@ -292,22 +291,39 @@ test("a bearer token authorizes exactly like the dedicated header", async () => 
   const keys = store(table);
   const minted = await keys.ensure(OWNER);
 
-  for (const name of ["authorization", "x-authorization"]) {
-    const resolution = await resolveApiKeyOwner(
-      { url: MCP_URL, headers: new Headers({ [name]: `${SCHEME} ${minted.apiKey}` }) },
-      env,
-      keys,
-    );
-    assert.equal(resolution.authorized && resolution.owner.email, OWNER, name);
-
-    assert.deepEqual(
+  assert.equal(
+    (
       await resolveApiKeyOwner(
-        { url: MCP_URL, headers: new Headers({ [name]: "Bearer ncli_wrong" }) },
+        { url: MCP_URL, headers: new Headers({ "x-api-key": minted.apiKey }) },
         env,
         keys,
-      ),
-      { authorized: false },
-      name,
-    );
-  }
+      )
+    ).authorized,
+    true,
+  );
+
+  const bearer = await resolveApiKeyOwner(
+    { url: MCP_URL, headers: new Headers({ authorization: `${SCHEME} ${minted.apiKey}` }) },
+    env,
+    keys,
+  );
+  assert.equal(bearer.authorized && bearer.owner.email, OWNER);
+
+  assert.deepEqual(
+    await resolveApiKeyOwner(
+      { url: MCP_URL, headers: new Headers({ "x-authorization": `${SCHEME} ${minted.apiKey}` }) },
+      env,
+      keys,
+    ),
+    { authorized: false },
+  );
+
+  assert.deepEqual(
+    await resolveApiKeyOwner(
+      { url: MCP_URL, headers: new Headers({ authorization: "Basic ncli_token" }) },
+      env,
+      keys,
+    ),
+    { authorized: false },
+  );
 });

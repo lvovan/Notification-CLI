@@ -105,10 +105,17 @@ function location(response: CoreResponse): URL {
   return new URL(response.headers?.["Location"] ?? "");
 }
 
-async function registerClient(store: OAuthStore): Promise<string> {
+function csp(response: CoreResponse): string {
+  return response.headers?.["Content-Security-Policy"] ?? "";
+}
+
+async function registerClient(
+  store: OAuthStore,
+  redirectUri: string = REDIRECT,
+): Promise<string> {
   const response = await handleRegisterRequest(
     request("POST", "/oauth/register", {
-      body: JSON.stringify({ redirect_uris: [REDIRECT], client_name: "Copilot <CLI>" }),
+      body: JSON.stringify({ redirect_uris: [redirectUri], client_name: "Copilot <CLI>" }),
     }),
     env,
     store,
@@ -206,7 +213,11 @@ test("the JWKS publishes the public half of the signing key alone", async () => 
 
 test("registration accepts the redirect shapes clients can actually use", async () => {
   const store = new MemoryOAuthStore();
-  for (const uri of ["https://client.example/cb", REDIRECT, "com.example.app:/callback"]) {
+  for (const uri of [
+    "https://client.example/cb",
+    REDIRECT,
+    "com.example.app:/callback",
+  ]) {
     const response = await handleRegisterRequest(
       request("POST", "/oauth/register", { body: JSON.stringify({ redirect_uris: [uri] }) }),
       env,
@@ -218,7 +229,15 @@ test("registration accepts the redirect shapes clients can actually use", async 
 
 test("registration refuses redirects that cannot be trusted", async () => {
   const store = new MemoryOAuthStore();
-  for (const uri of ["http://client.example/cb", "https://client.example/cb#fragment", "nonsense"]) {
+  for (const uri of [
+    "http://client.example/cb",
+    "https://client.example/cb#fragment",
+    "nonsense",
+    "javascript:alert(1)",
+    "data:text/html,hello",
+    "blob:https://client.example/id",
+    "file:///C:/callback",
+  ]) {
     const response = await handleRegisterRequest(
       request("POST", "/oauth/register", { body: JSON.stringify({ redirect_uris: [uri] }) }),
       env,
@@ -302,8 +321,47 @@ test("the consent page names the client and the account, escaped", async () => {
   assert.match(body, /Copilot &lt;CLI&gt;/);
   assert.ok(!body.includes("Copilot <CLI>"));
   assert.match(body, /user@example\.com/);
-  // The decision must come back to this origin only.
-  assert.match(response.headers?.["Content-Security-Policy"] ?? "", /form-action 'self'/);
+  assert.equal(
+    csp(response),
+    "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' http://127.0.0.1:33418; base-uri 'none'; frame-ancestors 'none'",
+  );
+});
+
+test("the consent page form-action names custom-scheme clients", async () => {
+  const store = new MemoryOAuthStore();
+  const redirectUri = "com.example.app:/callback";
+  const clientId = await registerClient(store, redirectUri);
+  const response = await handleAuthorizeRequest(
+    request(
+      "GET",
+      `/oauth/authorize?${authorizeQuery(clientId, pkce().challenge, {
+        redirect_uri: redirectUri,
+      }).toString()}`,
+    ),
+    env,
+    store,
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(
+    csp(response),
+    "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' com.example.app:; base-uri 'none'; frame-ancestors 'none'",
+  );
+});
+
+test("plain authorization error pages keep a non-redirect form policy", async () => {
+  const store = new MemoryOAuthStore();
+  const response = await handleAuthorizeRequest(
+    request("GET", `/oauth/authorize?${authorizeQuery("not-a-client", "x").toString()}`),
+    env,
+    store,
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal(
+    csp(response),
+    "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'",
+  );
 });
 
 test("an unregistered client or redirect never reaches the client", async () => {
@@ -330,6 +388,11 @@ test("an unregistered client or redirect never reaches the client", async () => 
   );
   assert.equal(badRedirect.status, 400);
   assert.equal(badRedirect.headers?.["Location"], undefined);
+  assert.ok(!csp(badRedirect).includes("https://evil.example"));
+  assert.equal(
+    csp(badRedirect),
+    "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'",
+  );
 });
 
 test("protocol errors are reported to the client with the state and issuer", async () => {

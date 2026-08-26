@@ -1,11 +1,9 @@
 /**
  * Host-neutral HTTP shapes.
  *
- * Handlers in this package are shared by two hosts: the Azure Functions app in
- * `apps/api` and the App Service server in `apps/server`. The types below are
- * deliberately the intersection of what both can provide, and are structurally
- * satisfied by the `HttpRequest` and `HttpResponseInit` types of
- * `@azure/functions`, so the Functions adapter needs no wrapping at all.
+ * Handlers in this package are shared below the App Service HTTP adapter. The
+ * types below are deliberately only the request and response shape the core
+ * handlers are allowed to depend on.
  */
 
 /** The subset of request headers a handler is allowed to depend on. */

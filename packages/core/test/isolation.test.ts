@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { repoPath } from "./paths.js";
 import test from "node:test";
-import type { HttpRequest } from "@azure/functions";
+import type { CoreRequest } from "@notification-cli/core/http";
 import { handleNegotiateRequest } from "@notification-cli/core/browser";
 import { fanOutNotification } from "@notification-cli/core/fanout";
 import { notificationOwner, userGroup, userKey } from "@notification-cli/core/identity";
@@ -14,10 +14,10 @@ const OTHER = "someone.else@example.com";
 const env = {};
 
 function source(name: string): string {
-  return readFileSync(resolve(`../../packages/core/src/${name}`), "utf8");
+  return readFileSync(repoPath("packages", "core", "src", name), "utf8");
 }
 
-function signedIn(email: string): HttpRequest {
+function signedIn(email: string): CoreRequest {
   return {
     headers: new Headers({
       "x-ms-client-principal": Buffer.from(
@@ -29,7 +29,7 @@ function signedIn(email: string): HttpRequest {
         }),
       ).toString("base64"),
     }),
-  } as HttpRequest;
+  } as unknown as CoreRequest;
 }
 
 test("an account's identity is a stable, opaque, normalized hash", () => {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { HttpRequest } from "@azure/functions";
+import type { CoreRequest } from "@notification-cli/core/http";
 import { fanOutNotification } from "@notification-cli/core/fanout";
 import { notificationOwner, userKey } from "@notification-cli/core/identity";
 import { handleMetricsRequest } from "@notification-cli/core/metrics";
@@ -32,10 +32,10 @@ function request(
   headers: Record<string, string> = {
     "x-ms-client-principal": principalHeader(),
   },
-): HttpRequest {
+): CoreRequest {
   return {
     headers: { get: (name: string) => headers[name.toLowerCase()] ?? null },
-  } as unknown as HttpRequest;
+  } as unknown as CoreRequest;
 }
 
 const emptyCounts: NotificationCounts = {

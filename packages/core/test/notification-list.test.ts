@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { repoPath } from "./paths.js";
 import test from "node:test";
 
-const mainPath = resolve("../web/src/main.ts");
-const htmlPath = resolve("../web/index.html");
-const stylePath = resolve("../web/src/style.css");
+const mainPath = repoPath("apps", "web", "src", "main.ts");
+const htmlPath = repoPath("apps", "web", "index.html");
+const stylePath = repoPath("apps", "web", "src", "style.css");
 
 test("notification history loads five items at a time with an opaque cursor", async () => {
   const main = await readFile(mainPath, "utf8");
