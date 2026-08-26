@@ -33,9 +33,6 @@ param namePrefix string = 'notification-cli'
 ])
 param location string = 'westeurope'
 
-@description('Semicolon-separated Microsoft account email addresses allowed to open the web frontend, for example "first@example.com;second@example.com".')
-param authorizedUsers string
-
 @description('URL-safe VAPID public key handed to authorized browsers. Leave empty to deploy without Web Push; live delivery to open tabs still works.')
 param vapidPublicKey string = ''
 
@@ -174,10 +171,6 @@ var sharedSettings = concat(
     {
       name: 'NOTIFICATION_CLI_RETENTION_DAYS'
       value: string(retentionDays)
-    }
-    {
-      name: 'AUTHORIZED_USERS'
-      value: authorizedUsers
     }
   ],
   pushConfigured

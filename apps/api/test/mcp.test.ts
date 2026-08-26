@@ -13,7 +13,7 @@ const OWNER = "user@example.com";
 const OTHER = "someone.else@example.com";
 const OWNER_KEY = "ncli_owner-key";
 const OTHER_KEY = "ncli_other-key";
-const env = { AUTHORIZED_USERS: `${OWNER};${OTHER}` };
+const env = {};
 
 /** Minimal stand-in; the real store's lifecycle is covered in api-key.test.ts. */
 class MemoryApiKeyStore implements ApiKeyStore {
@@ -142,15 +142,18 @@ test("a token is accepted from either scheme header", async () => {
     expected,
   );
 });
-test("a key stops working the moment its owner leaves AUTHORIZED_USERS", async () => {
+test("a key that resolves to any email is accepted without an allowlist", async () => {
   const store = keyStore();
   assert.deepEqual(
     await resolveApiKeyOwner(
       withHeaders({ "x-api-key": OTHER_KEY }),
-      { AUTHORIZED_USERS: OWNER },
+      env,
       store,
     ),
-    { authorized: false },
+    {
+      authorized: true,
+      owner: { email: OTHER, userKey: userKey(OTHER) },
+    },
   );
 });
 

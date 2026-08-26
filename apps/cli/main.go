@@ -134,7 +134,7 @@ func verifyAPIKey(ctx context.Context, client *http.Client, config configuration
 	if response.StatusCode == http.StatusUnauthorized {
 		return "", errors.New(
 			"the API key was rejected; copy the current key from the API key section of the web app, " +
-				"and make sure your account is in the authorized users list",
+				"or check that it was not mistyped or truncated",
 		)
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {

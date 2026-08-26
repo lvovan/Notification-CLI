@@ -327,17 +327,10 @@ export async function handleAuthorizeRequest(
   const origin = requestOrigin(request);
   const url = new URL(request.url);
 
-  const authorization = authorizeBrowserRequest(request, env);
+  const authorization = authorizeBrowserRequest(request);
   if (!authorization.authorized) {
-    if (authorization.status === 401) {
-      const target = encodeURIComponent(`${url.pathname}${url.search}`);
-      return seeOther(`/.auth/login/aad?post_login_redirect_uri=${target}`);
-    }
-    return page(
-      authorization.status,
-      "Not authorized",
-      `<h1>Not authorized</h1><p>${escapeHtml(authorization.error)}</p>`,
-    );
+    const target = encodeURIComponent(`${url.pathname}${url.search}`);
+    return seeOther(`/.auth/login/aad?post_login_redirect_uri=${target}`);
   }
 
   const validation = await validateAuthorize(request, origin, store, null);
@@ -363,12 +356,12 @@ export async function handleAuthorizeDecision(
   if (!store) {
     return oauthError(503, "temporarily_unavailable", "Storage is not configured.");
   }
-  const authorization = authorizeBrowserRequest(request, env);
+  const authorization = authorizeBrowserRequest(request);
   if (!authorization.authorized) {
     return page(
-      authorization.status,
-      "Not authorized",
-      `<h1>Not authorized</h1><p>${escapeHtml(authorization.error)}</p>`,
+      401,
+      "Sign-in problem",
+      `<h1>Sign-in problem</h1><p>${escapeHtml(authorization.error)}</p>`,
     );
   }
 

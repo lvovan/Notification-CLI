@@ -25,6 +25,10 @@ const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 /** One resume can fire pageshow, focus and visibilitychange together. */
 const UPDATE_CHECK_THROTTLE_MS = 60 * 1000;
 const NOTIFICATION_HISTORY_PAGE_SIZE = 5;
+const TEST_NOTIFICATION_MESSAGE = "Test notification from the web app";
+const TEST_NOTIFICATION_SUCCESS =
+  "Test notification sent. Waiting for it to arrive...";
+const TEST_NOTIFICATION_FEEDBACK_MS = 3000;
 
 type NotificationCounts = Record<(typeof METRIC_WINDOWS)[number], number>;
 
@@ -46,7 +50,7 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 const status = requiredElement("status");
-const statusDot = requiredElement("status-dot");
+const statusDot = requiredElement<HTMLButtonElement>("status-dot");
 const messageList = requiredElement<HTMLOListElement>("message-list");
 const emptyState = requiredElement("empty-state");
 const toggleNotifications = requiredElement<HTMLButtonElement>(
@@ -105,6 +109,8 @@ const CYCLE_ARM_TIMEOUT_MS = 4000;
 let clearArmTimer: number | undefined;
 let clearBusy = false;
 let lastRetentionDays: number | undefined;
+let testNotificationBusy = false;
+let testNotificationFeedbackTimer: number | undefined;
 
 function createActionButton(label: string, id: string): HTMLButtonElement {
   const button = document.createElement("button");
@@ -301,7 +307,7 @@ function setHistoryError(error: unknown, isFirstPage: boolean): void {
   messagesStatus.classList.add("error");
   if (
     error instanceof SessionAwareError &&
-    (error.status === 401 || error.status === 403)
+    error.status === 401
   ) {
     const signIn = document.createElement("a");
     signIn.href = "/.auth/login/aad?post_login_redirect_uri=/";
@@ -313,6 +319,43 @@ function setHistoryError(error: unknown, isFirstPage: boolean): void {
   const retry = createActionButton("Retry", "retry-notification-history");
   retry.addEventListener("click", () => void loadNotificationHistory());
   messagesStatus.append(retry);
+}
+
+function clearTestNotificationFeedback(): void {
+  window.clearTimeout(testNotificationFeedbackTimer);
+  testNotificationFeedbackTimer = undefined;
+  // This line is shared with history loading; if anything newer wrote here
+  // during the timeout, leave that newer status or error alone.
+  if (messagesStatus.textContent === TEST_NOTIFICATION_SUCCESS) {
+    setHistoryStatus(lastRetentionDays);
+  }
+}
+
+function showTestNotificationProgress(message: string): void {
+  window.clearTimeout(testNotificationFeedbackTimer);
+  messagesStatus.textContent = message;
+  messagesStatus.classList.remove("error");
+}
+
+function showTransientTestNotificationStatus(message: string): void {
+  showTestNotificationProgress(message);
+  testNotificationFeedbackTimer = window.setTimeout(
+    clearTestNotificationFeedback,
+    TEST_NOTIFICATION_FEEDBACK_MS,
+  );
+}
+
+function setTestNotificationError(context: string, error: unknown): void {
+  const detail = error instanceof Error ? error.message : "Unknown error";
+  window.clearTimeout(testNotificationFeedbackTimer);
+  messagesStatus.replaceChildren(`${context}: ${detail} `);
+  messagesStatus.classList.add("error");
+  if (error instanceof SessionAwareError && error.status === 401) {
+    const signIn = document.createElement("a");
+    signIn.href = "/.auth/login/aad?post_login_redirect_uri=/";
+    signIn.textContent = "Sign in again";
+    messagesStatus.append(signIn);
+  }
 }
 
 function stopNotificationHistoryPaging(): void {
@@ -598,7 +641,7 @@ function setApiKeyError(context: string, error: unknown): void {
   apiKeyStatus.classList.add("error");
   if (
     error instanceof SessionAwareError &&
-    (error.status === 401 || error.status === 403)
+    error.status === 401
   ) {
     const signIn = document.createElement("a");
     signIn.href = "/.auth/login/aad?post_login_redirect_uri=/";
@@ -664,6 +707,57 @@ function copyApiKeyToClipboard(): void {
     return;
   }
   copyWithExecCommand(key);
+}
+
+async function apiKeyForTestNotification(): Promise<string> {
+  if (currentApiKey) {
+    return currentApiKey;
+  }
+  showTestNotificationProgress(
+    "Loading API key before sending test notification...",
+  );
+  const key = await fetchApiKey("/api/apikey", "GET");
+  renderApiKey(key);
+  setApiKeyStatus("");
+  return key.apiKey;
+}
+
+async function sendTestNotification(): Promise<void> {
+  if (testNotificationBusy) {
+    return;
+  }
+  testNotificationBusy = true;
+  try {
+    const apiKey = await apiKeyForTestNotification();
+    showTestNotificationProgress("Sending test notification...");
+    const response = await fetch("/api/notify", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+      },
+      body: JSON.stringify({ message: TEST_NOTIFICATION_MESSAGE }),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as {
+        error?: unknown;
+      } | null;
+      throw new SessionAwareError(
+        typeof body?.error === "string"
+          ? body.error
+          : `notification request failed (${response.status})`,
+        response.status,
+      );
+    }
+    showTransientTestNotificationStatus(TEST_NOTIFICATION_SUCCESS);
+  } catch (error) {
+    setTestNotificationError("Unable to send test notification", error);
+  } finally {
+    testNotificationBusy = false;
+  }
 }
 
 function disarmCycle(): void {
@@ -770,7 +864,7 @@ function setPushError(context: string, error: unknown): void {
   setPushStatus(`${context}: ${detail}`, true);
   if (
     error instanceof SessionAwareError &&
-    (error.status === 401 || error.status === 403)
+    error.status === 401
   ) {
     // The Microsoft session expired or lost its identity while the page stayed
     // open, so recovering needs a fresh sign-in rather than a retry.
@@ -1048,6 +1142,9 @@ clearMessages.addEventListener("click", () => {
   }
 });
 cancelClear.addEventListener("click", disarmClear);
+statusDot.addEventListener("click", () => {
+  void sendTestNotification();
+});
 copyApiKey.addEventListener("click", copyApiKeyToClipboard);
 cycleApiKey.addEventListener("click", () => {
   if (apiKeyCycleBusy) {

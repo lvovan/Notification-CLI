@@ -81,7 +81,6 @@ jobs:
           VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_SUBJECT: ${{ vars.VAPID_SUBJECT }}
-          AUTHORIZED_USERS: ${{ vars.AUTHORIZED_USERS }}
           RETENTION_DAYS: ${{ vars.NOTIFICATION_CLI_RETENTION_DAYS || '7' }}
           ENTRA_TENANT_ID: ${{ vars.ENTRA_TENANT_ID }}
           ENTRA_CLIENT_ID: ${{ vars.ENTRA_CLIENT_ID }}
@@ -95,7 +94,6 @@ jobs:
               namePrefix="${{ inputs.name_prefix }}" \
               location="${{ inputs.location }}" \
               customDomain="${{ inputs.custom_domain }}" \
-              authorizedUsers="$AUTHORIZED_USERS" \
               vapidPublicKey="$VAPID_PUBLIC_KEY" \
               vapidPrivateKey="$VAPID_PRIVATE_KEY" \
               vapidSubject="$VAPID_SUBJECT" \
@@ -113,7 +111,6 @@ jobs:
           VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_SUBJECT: ${{ vars.VAPID_SUBJECT }}
-          AUTHORIZED_USERS: ${{ vars.AUTHORIZED_USERS }}
           RETENTION_DAYS: ${{ vars.NOTIFICATION_CLI_RETENTION_DAYS || '7' }}
           ENTRA_TENANT_ID: ${{ vars.ENTRA_TENANT_ID }}
           ENTRA_CLIENT_ID: ${{ vars.ENTRA_CLIENT_ID }}
@@ -128,7 +125,6 @@ jobs:
               namePrefix="${{ inputs.name_prefix }}" \
               location="${{ inputs.location }}" \
               customDomain="${{ inputs.custom_domain }}" \
-              authorizedUsers="$AUTHORIZED_USERS" \
               vapidPublicKey="$VAPID_PUBLIC_KEY" \
               vapidPrivateKey="$VAPID_PRIVATE_KEY" \
               vapidSubject="$VAPID_SUBJECT" \

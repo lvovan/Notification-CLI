@@ -16,7 +16,7 @@ export async function handleMetricsRequest(
   store?: NotificationMetricsStore | null,
   now: () => Date = () => new Date(),
 ): Promise<CoreResponse> {
-  const authorization = authorizeBrowserRequest(request, env);
+  const authorization = authorizeBrowserRequest(request);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);
   }

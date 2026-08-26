@@ -1,6 +1,5 @@
 import type { CoreRequest, CoreResponse } from "./http.js";
 
-export const AUTHORIZED_USERS_ENV = "AUTHORIZED_USERS";
 export const CLIENT_PRINCIPAL_HEADER = "x-ms-client-principal";
 
 interface ClientPrincipalClaim {
@@ -21,8 +20,6 @@ export type BrowserAuthorization =
   | {
       authorized: false;
       authenticated: boolean;
-      email?: string;
-      status: 401 | 403 | 503;
       error: string;
     };
 
@@ -37,15 +34,6 @@ const emailClaimTypes = new Set([
 
 export function normalizeEmail(value: string): string {
   return value.trim().toLowerCase();
-}
-
-export function parseAuthorizedUsers(value: string | undefined): Set<string> {
-  return new Set(
-    (value ?? "")
-      .split(";")
-      .map(normalizeEmail)
-      .filter((email) => email.length > 0),
-  );
 }
 
 export function parseClientPrincipal(
@@ -90,9 +78,13 @@ function principalEmail(principal: ClientPrincipal): string {
   return normalizeEmail(claim?.val ?? principal.userDetails);
 }
 
+/**
+ * Authorizes browser requests using the Static Web Apps/App Service Entra ID
+ * principal. Entra ID authentication is the authorization boundary: anyone with
+ * a valid AAD principal and a resolvable email is allowed through.
+ */
 export function authorizeBrowserRequest(
   request: Pick<CoreRequest, "headers">,
-  env: NodeJS.ProcessEnv = process.env,
 ): BrowserAuthorization {
   const principal = parseClientPrincipal(
     request.headers.get(CLIENT_PRINCIPAL_HEADER),
@@ -107,40 +99,17 @@ export function authorizeBrowserRequest(
     return {
       authorized: false,
       authenticated: false,
-      status: 401,
       error: "Microsoft account sign-in is required.",
     };
   }
 
   const email = principalEmail(principal);
-  const authorizedUsers = parseAuthorizedUsers(env[AUTHORIZED_USERS_ENV]);
-  if (authorizedUsers.size === 0) {
-    return {
-      authorized: false,
-      authenticated: true,
-      email,
-      status: 503,
-      error: `${AUTHORIZED_USERS_ENV} is not configured.`,
-    };
-  }
-  // A principal without a resolvable email is a broken session rather than an
-  // unauthorized account, so signing in again is the remedy.
   if (!email) {
     return {
       authorized: false,
       authenticated: true,
-      status: 401,
       error:
         "The Microsoft account session did not include an email address.",
-    };
-  }
-  if (!authorizedUsers.has(email)) {
-    return {
-      authorized: false,
-      authenticated: true,
-      email,
-      status: 403,
-      error: `This Microsoft account (${email}) is not authorized.`,
     };
   }
 
@@ -151,12 +120,10 @@ export function browserAuthorizationError(
   authorization: Exclude<BrowserAuthorization, { authorized: true }>,
 ): CoreResponse {
   return {
-    status: authorization.status,
+    status: 401,
     headers: { "Cache-Control": "no-store" },
     jsonBody: {
       authenticated: authorization.authenticated,
-      authorized: false,
-      email: authorization.email,
       error: authorization.error,
     },
   };

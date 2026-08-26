@@ -4,7 +4,6 @@
     "AzureWebJobsStorage": "",
     "FUNCTIONS_WORKER_RUNTIME": "node",
     "NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING": "<connection-string>",
-    "AUTHORIZED_USERS": "first.user@example.com;second.user@example.com",
     "NOTIFICATION_CLI_VAPID_PUBLIC_KEY": "<vapid-public-key>",
     "NOTIFICATION_CLI_VAPID_PRIVATE_KEY": "<vapid-private-key>",
     "NOTIFICATION_CLI_VAPID_SUBJECT": "mailto:admin@example.com",

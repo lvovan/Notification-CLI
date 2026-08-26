@@ -15,10 +15,11 @@ Web App, or an App Service that additionally acts as an OAuth authorization
 server, so MCP clients can authenticate without a copied secret. See
 [Hosting](#hosting).
 
-The app is multi-user. Every authorized Microsoft account has its own
-notifications, history, metrics and API key, and no account can ever see
-another's data. Each account's key is minted automatically the first time it
-opens the web app and is managed from the API key section of the frontend.
+The app is multi-user. Every Microsoft account admitted by the Entra
+application has its own notifications, history, metrics and API key, and no
+account can ever see another's data. Each account's key is minted
+automatically the first time it opens the web app and is managed from the API
+key section of the frontend.
 
 ## Architecture
 
@@ -191,6 +192,12 @@ exposed API, no app roles, no Graph permissions.
    `AzureADMyOrg` and a GUID they are rejected before the consent screen. If you
    sign in with `@outlook.com` or `@hotmail.com`, use `common`.
 
+   The Entra application's sign-in audience is the access control for this
+   service. Choose it deliberately: `AzureADMyOrg` admits everyone in that one
+   directory, while `AzureADandPersonalMicrosoftAccount` admits any Microsoft
+   account in the world. There is no application-side setting after sign-in to
+   narrow that audience back down, so a broad audience is a broad service.
+
 3. **Decide how the application authenticates itself** — or decide that it does
    not have to. The authorization code is bound to this server by PKCE, so a
    client credential is optional. Three arrangements work, and the first one
@@ -287,9 +294,11 @@ exposed API, no app roles, no Graph permissions.
    a wrong value fail very differently: the first attempts an assertion, the
    second is rejected by the token endpoint.
 
-Authenticating is not the same as being allowed in. Anyone in the chosen
-audience can complete sign-in; `AUTHORIZED_USERS` decides who the application
-then serves, and it is checked on every request rather than only at sign-in.
+The Entra application's sign-in audience is the access control. A successful
+sign-in is enough to use the application: a single-tenant `AzureADMyOrg`
+registration admits everyone in that tenant, and an
+`AzureADandPersonalMicrosoftAccount` registration admits any Microsoft account
+in the world. Pick the audience deliberately before exposing the service.
 
 The protocol itself is Microsoft's own [MSAL for
 Node](https://www.npmjs.com/package/@azure/msal-node): it builds the authorize
@@ -317,7 +326,6 @@ has none of it, and shows two symptoms in turn:
   az webapp config appsettings set --name <site> --resource-group <group> --settings `
     NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING="<connection string>" `
     NOTIFICATION_CLI_STORAGE_CONNECTION_STRING="<connection string>" `
-    AUTHORIZED_USERS="you@example.com" `
     NOTIFICATION_CLI_ENTRA_TENANT_ID="<tenant>" `
     NOTIFICATION_CLI_ENTRA_CLIENT_ID="<client>" `
     NOTIFICATION_CLI_ENTRA_CLIENT_SECRET="<secret, or omit entirely>" `
@@ -430,8 +438,11 @@ Sending notifications does not: only the saved configuration is read.
 
 Cycling the key from the web app's API key section invalidates the old key
 immediately, so afterwards you must re-run `notify --configure` and update
-every MCP client that used it. Removing your address from `AUTHORIZED_USERS`
-revokes your key just as immediately.
+every MCP client that used it. Removing an account from the Entra tenant or
+changing the app registration audience does not re-check existing API keys or
+OAuth access tokens on their next request. To revoke a user immediately, remove
+that user's API key row from storage, or have the user cycle the key from the
+web app.
 
 The CLI sends through `/api/notify`, allowing the server to resolve the key to
 your account and fan out each message to your active Web PubSub clients and
@@ -516,7 +527,6 @@ the Contributor role over the resource group, then set:
 
 | Repository variable | Purpose |
 | --- | --- |
-| `AUTHORIZED_USERS` | Semicolon-separated Microsoft account email addresses |
 | `VAPID_SUBJECT` | Contact URI such as `mailto:you@example.com` |
 | `NOTIFICATION_CLI_RETENTION_DAYS` | Optional. Defaults to `7` |
 
@@ -534,8 +544,7 @@ az staticwebapp secrets list --name notification-cli-swa `
 ```powershell
 az deployment group create `
   --resource-group notification-cli `
-  --template-file infra\main.bicep `
-  --parameters authorizedUsers="you@example.com"
+  --template-file infra\main.bicep
 ```
 
 Because the settings resource replaces the entire collection, a setting added
@@ -552,8 +561,7 @@ created instance:
 | Variable | Purpose |
 | --- | --- |
 | `NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING` | **Required.** Server-side Web PubSub connection used to negotiate browser access and send messages |
-| `AUTHORIZED_USERS` | **Required.** Semicolon-separated Microsoft account email addresses allowed to use the browser app. Removing an address revokes that account's API key immediately |
-| `NOTIFICATION_CLI_VAPID_PUBLIC_KEY` | Push only. URL-safe VAPID public key returned to authorized browsers |
+| `NOTIFICATION_CLI_VAPID_PUBLIC_KEY` | Push only. URL-safe VAPID public key returned to signed-in browsers |
 | `NOTIFICATION_CLI_VAPID_PRIVATE_KEY` | Push only. Secret VAPID private key used only by the API |
 | `NOTIFICATION_CLI_VAPID_SUBJECT` | Push only. VAPID contact URI, normally `mailto:you@example.com` |
 | `NOTIFICATION_CLI_STORAGE_CONNECTION_STRING` | Azure Storage connection string used for durable push subscriptions, per-user API keys, notification history and metrics |
@@ -590,27 +598,33 @@ management is required. The App Service host implements the same three routes
 itself and produces the same `x-ms-client-principal` header, so everything
 below applies identically to both. All `/api/*` routes remain anonymous at the
 routing layer and enforce their own security: `/api/notify` and `/api/mcp`
-resolve the presented `x-api-key` to the account that owns it and re-check that
-account against the allowlist on every call, while browser session,
-negotiation, and push-subscription handlers validate the signed-in principal
-and allowlist. Because authorization is re-evaluated per request, removing an
-address from `AUTHORIZED_USERS` revokes its API key immediately, with no
-separate key management step. Set `AUTHORIZED_USERS` to one or more email
-addresses, for example `first.user@example.com;second.user@example.com`.
-Comparison ignores case and surrounding whitespace. The API fails closed when
-the setting is absent or empty.
+resolve the presented `x-api-key` to the account that owns it, while browser
+session, negotiation, and push-subscription handlers validate the signed-in
+principal. The Entra application registration's audience decides who can sign
+in, and therefore who can use the service.
 
-After sign-in, `/api/session` confirms whether the Microsoft account is
-allowlisted. The page displays sign-in and sign-out links when access cannot be
-confirmed. Both `/api/session` and `/api/negotiate` validate the
-Static Web Apps `x-ms-client-principal` header server-side, so bypassing the
-route configuration does not bypass the email allowlist.
+Revocation is no longer an application setting change. An issued API key or
+OAuth access token keeps working until it is cycled or expires, even after the
+account loses access to the Entra tenant or the registration audience changes.
+To cut off a user's API-key access immediately, remove that user's key row from
+storage, or have the user cycle the key from the web app.
+
+After sign-in, `/api/session` reports the Microsoft account that the host
+accepted. The page displays sign-in and sign-out links when no browser session
+is present. Both `/api/session` and `/api/negotiate` validate the Static Web
+Apps `x-ms-client-principal` header server-side, so bypassing the route
+configuration does not bypass identity validation. Browser requests are either
+accepted with `200` or rejected with `401`.
 
 Open the deployed page and select **Enable notifications**. The browser stores
 its subscription in Azure Table Storage. After that, notifications can arrive
 while the page is closed. On iPhone and iPad, install the PWA on the Home
 Screen before enabling notifications; iOS supports Web Push only for installed
 web apps.
+
+The connection status dot is also a test button. Hovering it shows
+`Click to send a test message`, and clicking or tapping it sends a notification
+to your own account.
 
 For local Functions development, copy
 `apps\api\local.settings.example.json` to
@@ -782,10 +796,10 @@ the metadata document, and the flow proceeds from there:
 
 Registration is open, because MCP clients cannot be enrolled in advance. It
 grants nothing on its own: a token is only ever issued after you sign in with
-your Microsoft account and approve the consent page, and only if your account
-is listed in `AUTHORIZED_USERS`. PKCE (S256) is required, authorization codes
-live 60 seconds and are single-use, access tokens live one hour, and refresh
-tokens rotate on every use.
+your Microsoft account under the Entra application's audience and approve the
+consent page. PKCE (S256) is required, authorization codes live 60 seconds and
+are single-use, access tokens live one hour, and refresh tokens rotate on every
+use.
 
 Tokens are ES256-signed and bound to the deployment that issued them: the
 `issuer`, the `mcp` scope and the audience `https://<your-host>/api/mcp` are
@@ -993,14 +1007,26 @@ This release converts the app from a single shared key to per-user keys. The
 `NOTIFICATION_CLI_API_KEY` application setting is gone. Upgrade an existing
 deployment in this order:
 
-1. Delete the `NotificationHistory` and `NotificationMetrics` tables in the
+1. Review the Entra application registration's sign-in audience before
+   deploying. After this release, everyone that audience admits can use the
+   deployment. If the registration was created with a broad audience because
+   `AUTHORIZED_USERS` was expected to do the real gatekeeping, narrow the
+   audience now or explicitly accept that exposure before continuing.
+2. Delete the `NotificationHistory` and `NotificationMetrics` tables in the
    storage account. The code recreates them automatically on next use; their
    schema has changed, so old rows are unusable. Notification counters restart
    at zero.
-2. Remove the `NOTIFICATION_CLI_API_KEY` application setting from the Static
+3. Remove the `NOTIFICATION_CLI_API_KEY` application setting from the Static
    Web App.
-3. Deploy.
-4. Each user signs in, copies their new personal key from the API key section
+4. Remove the `AUTHORIZED_USERS` application setting from both hosts: the
+   Static Web App and, if deployed, the App Service. A Bicep redeploy drops it
+   automatically because the settings resource replaces the whole collection,
+   but a setting added by hand to a hand-created site must be removed by hand.
+5. Remove the `AUTHORIZED_USERS` repository variable used by the infrastructure
+   workflow. The workflow no longer passes it, so leaving it behind is
+   misleading.
+6. Deploy.
+7. Each user signs in, copies their new personal key from the API key section
    of the UI, then re-runs `notify --configure` and updates their MCP config.
 
 The CLI no longer *reads* `NOTIFICATION_CLI_API_URL` or
@@ -1022,16 +1048,16 @@ settings — are obsolete and should be removed.
 - Treat your personal API key like a password. Cycle it from the web app's API
   key section if it is exposed; the old key stops working immediately, so
   update the CLI configuration and every MCP client that used it. Each key
-  guards only its owner's `/api/notify` and `/api/mcp` access, and is
-  additionally revoked the moment its account leaves `AUTHORIZED_USERS`.
-- Keep `AUTHORIZED_USERS` limited to the Microsoft accounts that should receive
-  browser notifications. An authenticated account is not sufficient by itself.
+  guards only its owner's `/api/notify` and `/api/mcp` access.
+- Choose the Entra application audience as if it were the access-control list,
+  because it is. A single-tenant registration admits the whole tenant; a
+  work-school-and-personal registration admits any Microsoft account.
 - Keep the local CLI configuration file private to your user account.
 - The authenticated negotiate endpoint grants receive-only, short-lived
   access. It does not grant permission to publish messages.
 - All `/api/*` routes intentionally remain anonymous at the Static Web Apps
   routing layer. Each handler fails closed unless its endpoint-specific API key
-  or authorized browser principal is valid.
+  or signed-in browser principal is valid.
 - The infrastructure workflow authenticates with OpenID Connect, so no Azure
   credential is stored in the repository, and it never prints the Static Web
   App deployment token.

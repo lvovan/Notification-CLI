@@ -195,24 +195,17 @@ test("the code challenge is the S256 hash of the verifier that is later presente
 });
 
 test("a completed sign-in authenticates later requests", async () => {
-  process.env.AUTHORIZED_USERS = OWNER;
-  try {
-    await withServer(fakeClient(), async (origin) => {
-      const session = await signIn(origin);
-      assert.ok(session.startsWith("ncli_session="));
+  await withServer(fakeClient(), async (origin) => {
+    const session = await signIn(origin);
+    assert.ok(session.startsWith("ncli_session="));
 
-      const response = await fetch(`${origin}/api/session`, { headers: { cookie: session } });
-      assert.equal(response.status, 200);
-      // The address is normalized, so the allowlist comparison is exact.
-      assert.deepEqual(await response.json(), {
-        authenticated: true,
-        authorized: true,
-        email: OWNER,
-      });
+    const response = await fetch(`${origin}/api/session`, { headers: { cookie: session } });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      authenticated: true,
+      email: OWNER,
     });
-  } finally {
-    delete process.env.AUTHORIZED_USERS;
-  }
+  });
 });
 
 // Each refusal names its own cause: "start again" and "allow cookies" are

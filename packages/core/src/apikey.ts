@@ -38,7 +38,7 @@ async function withKeyStore(
   store: ApiKeyStore | null | undefined,
   action: (keys: ApiKeyStore, email: string) => Promise<ApiKeyRecord>,
 ): Promise<CoreResponse> {
-  const authorization = authorizeBrowserRequest(request, env);
+  const authorization = authorizeBrowserRequest(request);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);
   }

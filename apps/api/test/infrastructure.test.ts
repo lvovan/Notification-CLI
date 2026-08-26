@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
-import { AUTHORIZED_USERS_ENV } from "@notification-cli/core/auth";
 import { API_KEYS_TABLE } from "@notification-cli/core/api-key-storage";
 import {
   VAPID_PRIVATE_KEY_ENV,
@@ -30,7 +29,6 @@ test("the template supplies every setting the API reads", async () => {
   for (const setting of [
     CONNECTION_STRING_ENV,
     STORAGE_CONNECTION_STRING_ENV,
-    AUTHORIZED_USERS_ENV,
     RETENTION_DAYS_ENV,
     VAPID_PUBLIC_KEY_ENV,
     VAPID_PRIVATE_KEY_ENV,
@@ -51,6 +49,15 @@ test("the template no longer supplies the removed shared API key setting", async
   assert.ok(
     !template.includes("NOTIFICATION_CLI_API_KEY"),
     "infra/main.bicep still references the removed NOTIFICATION_CLI_API_KEY setting",
+  );
+});
+
+test("the template does not declare an authorized users allowlist", async () => {
+  const template = await readFile(templatePath, "utf8");
+
+  assert.ok(
+    !template.includes("AUTHORIZED_USERS"),
+    "infra/main.bicep still references the removed AUTHORIZED_USERS setting",
   );
 });
 

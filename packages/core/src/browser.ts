@@ -11,10 +11,9 @@ import {
 
 export async function handleNegotiateRequest(
   request: CoreRequest,
-  env: NodeJS.ProcessEnv = process.env,
   createClient: () => NotificationNegotiator = createWebPubSubClient,
 ): Promise<CoreResponse> {
-  const authorization = authorizeBrowserRequest(request, env);
+  const authorization = authorizeBrowserRequest(request);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);
   }
@@ -32,9 +31,8 @@ export async function handleNegotiateRequest(
 
 export function handleSessionRequest(
   request: CoreRequest,
-  env: NodeJS.ProcessEnv = process.env,
 ): CoreResponse {
-  const authorization = authorizeBrowserRequest(request, env);
+  const authorization = authorizeBrowserRequest(request);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);
   }
@@ -44,7 +42,6 @@ export function handleSessionRequest(
     headers: { "Cache-Control": "no-store" },
     jsonBody: {
       authenticated: true,
-      authorized: true,
       email: authorization.email,
     },
   };

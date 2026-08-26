@@ -15,7 +15,7 @@ const NOW = new Date("2026-08-23T12:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1000;
 const OWNER = "user@example.com";
 const OTHER = "someone.else@example.com";
-const authorizedEnv = { AUTHORIZED_USERS: `${OWNER};${OTHER}` };
+const authorizedEnv = {};
 
 function principalHeader(email = OWNER): string {
   return Buffer.from(
@@ -92,7 +92,7 @@ test("future and expired timestamps are excluded from every window", () => {
   );
 });
 
-test("metrics endpoint requires an authorized browser session", async () => {
+test("metrics endpoint requires an authenticated browser session", async () => {
   const store = new MemoryMetricsStore(
     new Map([
       [
@@ -126,12 +126,13 @@ test("metrics endpoint requires an authorized browser session", async () => {
   );
   assert.equal(anonymous.status, 401);
 
-  const unlisted = await handleMetricsRequest(
+  const other = await handleMetricsRequest(
     request({ "x-ms-client-principal": principalHeader("nobody@example.com") }),
     authorizedEnv,
     store,
   );
-  assert.equal(unlisted.status, 403);
+  assert.equal(other.status, 200);
+  assert.deepEqual(other.jsonBody, emptyCounts);
 });
 
 test("metrics are counted per account, never across accounts", async () => {

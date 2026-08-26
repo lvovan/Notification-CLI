@@ -57,7 +57,13 @@
       </header>
 
       <section class="status-card" aria-live="polite">
-        <span id="status-dot" class="status-dot"></span>
+        <button
+          id="status-dot"
+          class="status-dot"
+          type="button"
+          aria-label="Send a test notification"
+          title="Click to send a test message"
+        ></button>
         <div class="status-text">
           <strong id="status">Connecting...</strong>
           <p class="push-status" id="account-email"></p>
@@ -206,16 +212,16 @@
           headers: { Accept: "application/json" },
         });
         const session = await response.json();
-        if (response.ok && session.authorized) {
+        if (response.ok) {
           document.querySelector("#account-email").textContent =
             session.email ?? "";
           gate.hidden = true;
           app.hidden = false;
           await import("/src/main.ts");
         } else {
-          status.textContent = "Account not authorized";
+          status.textContent = "Sign in required";
           detail.textContent =
-            session.error ?? "Sign in with an authorized Microsoft account.";
+            session.error ?? "Sign in with your Microsoft account to continue.";
         }
       } catch {
         status.textContent = "Unable to verify account access";

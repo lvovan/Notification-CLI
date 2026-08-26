@@ -31,7 +31,7 @@ export function handlePushConfigRequest(
   request: CoreRequest,
   env: NodeJS.ProcessEnv = process.env,
 ): CoreResponse {
-  const authorization = authorizeBrowserRequest(request, env);
+  const authorization = authorizeBrowserRequest(request);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);
   }
@@ -52,7 +52,7 @@ export async function handleSavePushSubscription(
   env: NodeJS.ProcessEnv = process.env,
   store?: PushSubscriptionStore,
 ): Promise<CoreResponse> {
-  const authorization = authorizeBrowserRequest(request, env);
+  const authorization = authorizeBrowserRequest(request);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);
   }
@@ -87,7 +87,7 @@ export async function handleDeletePushSubscription(
   env: NodeJS.ProcessEnv = process.env,
   store?: PushSubscriptionStore,
 ): Promise<CoreResponse> {
-  const authorization = authorizeBrowserRequest(request, env);
+  const authorization = authorizeBrowserRequest(request);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);
   }

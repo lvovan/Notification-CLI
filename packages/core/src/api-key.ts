@@ -1,5 +1,4 @@
 import { requestOrigin, type CoreRequest, type CoreHeaders } from "./http.js";
-import { AUTHORIZED_USERS_ENV, parseAuthorizedUsers } from "./auth.js";
 import {
   API_KEY_PREFIX,
   tryCreateApiKeyStore,
@@ -56,8 +55,8 @@ export function presentedApiKey(
  * `Authorization: Bearer` header serves OAuth clients and, for clients that
  * cannot do OAuth, the key they can paste in.
  *
- * Authorization is re-evaluated on every request, so removing an address from
- * AUTHORIZED_USERS revokes both kinds of credential immediately.
+ * A resolved email is sufficient. Keys and issued tokens remain valid until
+ * they are cycled or expire because no allowlist is re-checked.
  */
 export async function resolveApiKeyOwner(
   request: Pick<CoreRequest, "headers" | "url">,
@@ -77,10 +76,6 @@ export async function resolveApiKeyOwner(
     return { authorized: false };
   }
 
-  const authorizedUsers = parseAuthorizedUsers(env[AUTHORIZED_USERS_ENV]);
-  if (!authorizedUsers.has(email)) {
-    return { authorized: false };
-  }
   return { authorized: true, owner: notificationOwner(email) };
 }
 

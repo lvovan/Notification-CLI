@@ -26,7 +26,6 @@ import {
 const OWNER = "user@example.com";
 const CLI_KEY = "ncli_cli-test-key";
 const authorizedEnv = {
-  AUTHORIZED_USERS: OWNER,
   NOTIFICATION_CLI_VAPID_PUBLIC_KEY: `B${"A".repeat(86)}`,
 };
 
@@ -129,9 +128,7 @@ test("push config requires authorization and returns the server public key", () 
   );
   assert.equal(denied.status, 401);
 
-  const missingKey = handlePushConfigRequest(request(), {
-    AUTHORIZED_USERS: "user@example.com",
-  });
+  const missingKey = handlePushConfigRequest(request(), {});
   assert.equal(missingKey.status, 503);
 });
 

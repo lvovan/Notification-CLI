@@ -54,7 +54,7 @@ export async function handleNotificationsRequest(
   store?: NotificationHistoryStore | null,
   now: () => Date = () => new Date(),
 ): Promise<CoreResponse> {
-  const authorization = authorizeBrowserRequest(request, env);
+  const authorization = authorizeBrowserRequest(request);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);
   }
@@ -128,7 +128,7 @@ export async function handleClearNotificationsRequest(
   env: NodeJS.ProcessEnv = process.env,
   store?: NotificationHistoryStore | null,
 ): Promise<CoreResponse> {
-  const authorization = authorizeBrowserRequest(request, env);
+  const authorization = authorizeBrowserRequest(request);
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);
   }

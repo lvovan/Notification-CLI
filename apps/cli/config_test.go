@@ -185,8 +185,8 @@ func TestVerifyAPIKeyRejectsUnauthorized(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "API key section") {
 		t.Fatalf("expected actionable rejection error, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "authorized") {
-		t.Fatalf("expected error to mention the authorized users list, got %v", err)
+	if !strings.Contains(err.Error(), "mistyped or truncated") {
+		t.Fatalf("expected error to mention mistyped or truncated keys, got %v", err)
 	}
 	if strings.Contains(err.Error(), testAPIKey) {
 		t.Fatal("error exposed API key")

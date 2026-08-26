@@ -11,7 +11,7 @@ import { CLIENT_TOKEN_MINUTES } from "@notification-cli/core/web-pubsub";
 
 const OWNER = "user@example.com";
 const OTHER = "someone.else@example.com";
-const env = { AUTHORIZED_USERS: `${OWNER};${OTHER}` };
+const env = {};
 
 function source(name: string): string {
   return readFileSync(resolve(`../../packages/core/src/${name}`), "utf8");
@@ -58,8 +58,8 @@ test("negotiate issues a role-free token scoped to the caller's own group", asyn
     },
   });
 
-  await handleNegotiateRequest(signedIn(OWNER), env, createClient);
-  await handleNegotiateRequest(signedIn(OTHER), env, createClient);
+  await handleNegotiateRequest(signedIn(OWNER), createClient);
+  await handleNegotiateRequest(signedIn(OTHER), createClient);
 
   assert.deepEqual(
     issued.map((options) => options.groups),
@@ -196,7 +196,7 @@ test("sender endpoints derive identity only by resolving the API key", () => {
     assert.match(contents, /resolveApiKeyOwner\(/, file);
     assert.ok(
       !/AUTHORIZED_USERS/.test(contents),
-      `${file} must rely on key resolution for the allowlist check`,
+      `${file} must not re-check a removed allowlist`,
     );
   }
 });

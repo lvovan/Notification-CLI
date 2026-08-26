@@ -28,7 +28,7 @@ const ORIGIN = "https://notify.example.com";
 const RESOURCE = `${ORIGIN}/api/mcp`;
 const OWNER = "user@example.com";
 const REDIRECT = "http://127.0.0.1:33418/callback";
-const env = { AUTHORIZED_USERS: OWNER };
+const env = {};
 
 class MemoryOAuthStore implements OAuthStore {
   readonly key = generateSigningKey();
@@ -82,11 +82,13 @@ function principalHeader(email = OWNER): string {
 function request(
   method: string,
   path: string,
-  options: { signedIn?: boolean; body?: string } = {},
+  options: { signedIn?: boolean; body?: string; email?: string } = {},
 ): CoreRequest {
   const url = new URL(path, ORIGIN);
   const headers = new Headers(
-    options.signedIn === false ? {} : { "x-ms-client-principal": principalHeader() },
+    options.signedIn === false
+      ? {}
+      : { "x-ms-client-principal": principalHeader(options.email ?? OWNER) },
   );
   return {
     method,
@@ -252,16 +254,39 @@ test("an unauthenticated visitor is sent through sign-in and back", async () => 
   assert.match(decodeURIComponent(target), /\/oauth\/authorize\?client_id=/);
 });
 
-test("an unauthorized account is told so rather than redirected", async () => {
+test("a broken authorize session is sent through sign-in again", async () => {
   const store = new MemoryOAuthStore();
   const clientId = await registerClient(store);
+  const query = authorizeQuery(clientId, pkce().challenge);
+
   const response = await handleAuthorizeRequest(
-    request("GET", `/oauth/authorize?${authorizeQuery(clientId, pkce().challenge).toString()}`),
-    { AUTHORIZED_USERS: "someone.else@example.com" },
+    request("GET", `/oauth/authorize?${query.toString()}`, { email: " " }),
+    env,
     store,
   );
-  assert.equal(response.status, 403);
-  assert.match(response.body ?? "", /Not authorized/);
+
+  assert.equal(response.status, 302);
+  const target = response.headers?.["Location"] ?? "";
+  assert.ok(target.startsWith("/.auth/login/aad?post_login_redirect_uri="));
+  assert.match(decodeURIComponent(target), /\/oauth\/authorize\?client_id=/);
+});
+
+test("an authorize decision with a broken session reports a sign-in problem", async () => {
+  const store = new MemoryOAuthStore();
+  const clientId = await registerClient(store);
+  const response = await handleAuthorizeDecision(
+    request("POST", "/oauth/authorize", {
+      body: new URLSearchParams({
+        ...Object.fromEntries(authorizeQuery(clientId, pkce().challenge)),
+        decision: "allow",
+      }).toString(),
+      email: " ",
+    }),
+    env,
+    store,
+  );
+  assert.equal(response.status, 401);
+  assert.match(response.body ?? "", /Sign-in problem/);
 });
 
 test("the consent page names the client and the account, escaped", async () => {
@@ -493,7 +518,7 @@ test("a token minted elsewhere or for another resource is worthless", async () =
   }
 });
 
-test("a token whose account left the allowlist stops working at once", async () => {
+test("a token that resolves to an email is accepted without an allowlist", async () => {
   const store = new MemoryOAuthStore();
   const tokens = await completeFlow(store);
   const resolution = await resolveApiKeyOwner(
@@ -501,11 +526,11 @@ test("a token whose account left the allowlist stops working at once", async () 
       url: RESOURCE,
       headers: new Headers({ authorization: `Bearer ${String(tokens["access_token"])}` }),
     },
-    { AUTHORIZED_USERS: "someone.else@example.com" },
+    env,
     null,
     store,
   );
-  assert.deepEqual(resolution, { authorized: false });
+  assert.equal(resolution.authorized && resolution.owner.email, OWNER);
 });
 
 test("an unauthenticated MCP call advertises where to get a token", async () => {

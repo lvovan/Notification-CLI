@@ -189,13 +189,34 @@ time {
  * between that first line box and its own height.
  */
 .status-dot {
+  position: relative;
   align-self: start;
   width: var(--status-dot-size);
   height: var(--status-dot-size);
+  padding: 0;
+  border: 0;
   margin-top: calc((1lh - var(--status-dot-size)) / 2);
+  appearance: none;
   border-radius: 50%;
   background: var(--cp-warning);
   box-shadow: 0 0 0 5px var(--cp-accent-soft);
+  cursor: pointer;
+}
+
+/* The dot is deliberately small, so the touch target is grown past it
+ * rather than the dot being drawn larger. */
+.status-dot::after {
+  content: "";
+  position: absolute;
+  inset: calc((44px - var(--status-dot-size)) / -2)
+    calc((41px - var(--status-dot-size)) / -2)
+    calc((44px - var(--status-dot-size)) / -2)
+    calc((47px - var(--status-dot-size)) / -2);
+  border-radius: 50%;
+}
+
+.status-dot:focus-visible {
+  box-shadow: 0 0 0 5px var(--cp-accent);
 }
 
 .status-dot.connected {

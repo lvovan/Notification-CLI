@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test, { after, before } from "node:test";
+import test, { before } from "node:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,11 +16,6 @@ before(async () => {
   await writeFile(join(webRoot, "index.html"), "<!doctype html><title>shell</title>");
   await writeFile(join(webRoot, "app.a1b2c3.js"), "export default 1;");
   await writeFile(join(webRoot, "secret.txt"), "not served");
-  process.env.AUTHORIZED_USERS = OWNER;
-});
-
-after(() => {
-  delete process.env.AUTHORIZED_USERS;
 });
 
 function session(email: string | null): SessionProvider {
@@ -51,7 +46,6 @@ test("an API route reaches the shared handler with the resolved identity", async
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), {
       authenticated: true,
-      authorized: true,
       email: OWNER,
     });
     assert.equal(response.headers.get("cache-control"), "no-store");

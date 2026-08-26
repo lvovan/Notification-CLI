@@ -4,7 +4,6 @@ import type { HttpRequest } from "@azure/functions";
 import {
   authorizeBrowserRequest,
   normalizeEmail,
-  parseAuthorizedUsers,
   parseClientPrincipal,
 } from "@notification-cli/core/auth";
 import {
@@ -32,12 +31,8 @@ function requestFor(
   } as HttpRequest;
 }
 
-test("normalizes and parses the semicolon-separated allowlist", () => {
+test("normalizes email addresses", () => {
   assert.equal(normalizeEmail(" User@Example.COM "), "user@example.com");
-  assert.deepEqual(
-    [...parseAuthorizedUsers(" A@Example.com ; ;b@example.COM; a@example.com")],
-    ["a@example.com", "b@example.com"],
-  );
 });
 
 test("parses a valid SWA principal and rejects malformed principals", () => {
@@ -58,44 +53,35 @@ test("parses a valid SWA principal and rejects malformed principals", () => {
   );
 });
 
-test("authorizes only allowlisted authenticated AAD email addresses", () => {
-  const env = { AUTHORIZED_USERS: "other@example.com; USER@example.com " };
-  assert.deepEqual(authorizeBrowserRequest(requestFor(), env), {
+test("authorizes authenticated AAD principals without environment configuration", () => {
+  assert.deepEqual(authorizeBrowserRequest(requestFor()), {
     authorized: true,
     email: "user@example.com",
   });
+});
 
-  const denied = authorizeBrowserRequest(requestFor("no@example.com"), env);
-  assert.equal(denied.authorized, false);
-  assert.equal(denied.status, 403);
+test("rejects missing or non-AAD authenticated principals", () => {
+  const noPrincipal = authorizeBrowserRequest({ headers: new Headers() });
+  assert.equal(noPrincipal.authorized, false);
+  assert.equal(noPrincipal.authenticated, false);
 
   const wrongProvider = authorizeBrowserRequest(
     requestFor("user@example.com", { identityProvider: "github" }),
-    env,
   );
   assert.equal(wrongProvider.authorized, false);
-  assert.equal(wrongProvider.status, 401);
-});
+  assert.equal(wrongProvider.authenticated, false);
 
-test("fails closed when AUTHORIZED_USERS or the principal is absent", () => {
-  const missingAllowlist = authorizeBrowserRequest(requestFor(), {});
-  assert.equal(missingAllowlist.authorized, false);
-  assert.equal(missingAllowlist.status, 503);
-
-  const noPrincipal = authorizeBrowserRequest(
-    { headers: new Headers() },
-    { AUTHORIZED_USERS: "user@example.com" },
+  const missingRole = authorizeBrowserRequest(
+    requestFor("user@example.com", { userRoles: ["anonymous"] }),
   );
-  assert.equal(noPrincipal.authorized, false);
-  assert.equal(noPrincipal.status, 401);
+  assert.equal(missingRole.authorized, false);
+  assert.equal(missingRole.authenticated, false);
 });
 
 test("treats a principal without an email as an expired session, not a denial", () => {
-  const authorization = authorizeBrowserRequest(requestFor("  "), {
-    AUTHORIZED_USERS: "user@example.com",
-  });
+  const authorization = authorizeBrowserRequest(requestFor("  "));
   assert.equal(authorization.authorized, false);
-  assert.equal(authorization.status, 401);
+  assert.equal(authorization.authenticated, true);
   assert.match(authorization.error ?? "", /did not include an email address/);
 });
 
@@ -104,7 +90,6 @@ test("uses an email claim when supplied by the SWA principal", () => {
     requestFor("display name", {
       claims: [{ typ: "email", val: " Claimed@Example.com " }],
     }),
-    { AUTHORIZED_USERS: "claimed@example.com" },
   );
   assert.deepEqual(authorization, {
     authorized: true,
@@ -112,23 +97,21 @@ test("uses an email claim when supplied by the SWA principal", () => {
   });
 });
 
-test("session reports authorization without caching", () => {
-  const response = handleSessionRequest(requestFor(), {
-    AUTHORIZED_USERS: "user@example.com",
-  });
+test("session reports authentication without caching", () => {
+  const response = handleSessionRequest(requestFor());
   assert.equal(response.status, 200);
   assert.equal(new Headers(response.headers).get("Cache-Control"), "no-store");
   assert.deepEqual(response.jsonBody, {
     authenticated: true,
-    authorized: true,
     email: "user@example.com",
   });
 
-  const denied = handleSessionRequest(requestFor(), {
-    AUTHORIZED_USERS: "other@example.com",
+  const denied = handleSessionRequest({ headers: new Headers() } as HttpRequest);
+  assert.equal(denied.status, 401);
+  assert.deepEqual(denied.jsonBody, {
+    authenticated: false,
+    error: "Microsoft account sign-in is required.",
   });
-  assert.equal(denied.status, 403);
-  assert.equal((denied.jsonBody as { authorized: boolean }).authorized, false);
 });
 
 test("negotiate enforces authorization before issuing a token", async () => {
@@ -141,16 +124,14 @@ test("negotiate enforces authorization before issuing a token", async () => {
   });
 
   const denied = await handleNegotiateRequest(
-    requestFor(),
-    { AUTHORIZED_USERS: "other@example.com" },
+    { headers: new Headers() } as HttpRequest,
     createClient,
   );
-  assert.equal(denied.status, 403);
+  assert.equal(denied.status, 401);
   assert.equal(calls, 0);
 
   const accepted = await handleNegotiateRequest(
     requestFor(),
-    { AUTHORIZED_USERS: "user@example.com" },
     createClient,
   );
   assert.equal(accepted.status, 200);

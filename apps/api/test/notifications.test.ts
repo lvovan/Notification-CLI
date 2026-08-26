@@ -227,7 +227,6 @@ test("the notifications endpoint is gated and reports the retention window", asy
   const store = new MemoryHistoryStore();
   await store.append(userKey(OWNER), notification("one", NOW.getTime(), "hello"));
   const env = {
-    AUTHORIZED_USERS: `${OWNER};${OTHER}`,
     NOTIFICATION_CLI_RETENTION_DAYS: "14",
   };
 
@@ -258,7 +257,7 @@ test("the notifications endpoint is gated and reports the retention window", asy
 
   const unconfigured = await handleNotificationsRequest(
     signedIn(),
-    { AUTHORIZED_USERS: OWNER },
+    {},
     null,
     () => NOW,
   );
@@ -277,7 +276,7 @@ test("the notifications endpoint never returns another account's history", async
   const store = new MemoryHistoryStore();
   await store.append(userKey(OWNER), notification("mine", NOW.getTime()));
   await store.append(userKey(OTHER), notification("theirs", NOW.getTime()));
-  const env = { AUTHORIZED_USERS: `${OWNER};${OTHER}` };
+  const env = {};
 
   const mine = await handleNotificationsRequest(signedIn(), env, store, () => NOW);
   const theirs = await handleNotificationsRequest(
@@ -300,7 +299,7 @@ test("the notifications endpoint never returns another account's history", async
 test("the endpoint ignores any account identifier supplied by the caller", async () => {
   const store = new MemoryHistoryStore();
   await store.append(userKey(OTHER), notification("theirs", NOW.getTime()));
-  const env = { AUTHORIZED_USERS: `${OWNER};${OTHER}` };
+  const env = {};
 
   for (const url of [
     `https://example.com/api/notifications?email=${encodeURIComponent(OTHER)}`,
@@ -329,7 +328,7 @@ test("the notifications endpoint defaults to a five item page", async () => {
 
   const response = await handleNotificationsRequest(
     signedIn(),
-    { AUTHORIZED_USERS: OWNER },
+    {},
     store,
     () => NOW,
   );
@@ -354,7 +353,7 @@ test("a notification cursor returns strictly older pages without gaps", async ()
     await store.append(userKey(OWNER), entry);
   }
 
-  const env = { AUTHORIZED_USERS: OWNER };
+  const env = {};
   const pages: StoredNotification[][] = [];
   let cursor: string | null = null;
   for (let page = 0; page < 3; page += 1) {
@@ -387,7 +386,7 @@ test("limit and before query validation returns bad request errors", async () =>
   ]) {
     const response = await handleNotificationsRequest(
       signedIn(OWNER, url),
-      { AUTHORIZED_USERS: OWNER },
+      {},
       store,
       () => NOW,
     );
@@ -403,7 +402,7 @@ test("same-millisecond notifications page across the id tiebreak", async () => {
     await store.append(userKey(OWNER), notification(id, sentAt));
   }
 
-  const env = { AUTHORIZED_USERS: OWNER };
+  const env = {};
   const seen: string[] = [];
   let cursor: string | null = null;
   for (let page = 0; page < 3; page += 1) {
@@ -432,7 +431,7 @@ test("clearing removes only the caller's notifications", async () => {
   const store = new MemoryHistoryStore();
   await store.append(userKey(OWNER), notification("mine", NOW.getTime()));
   await store.append(userKey(OTHER), notification("theirs", NOW.getTime()));
-  const env = { AUTHORIZED_USERS: `${OWNER};${OTHER}` };
+  const env = {};
 
   const response = await handleClearNotificationsRequest(
     signedIn(OWNER),
@@ -458,7 +457,7 @@ test("clearing leaves the metrics untouched", async () => {
     record: async () => undefined,
     counts: async () => counts,
   };
-  const env = { AUTHORIZED_USERS: OWNER };
+  const env = {};
 
   await handleClearNotificationsRequest(signedIn(OWNER), env, history);
 
@@ -469,19 +468,12 @@ test("clearing leaves the metrics untouched", async () => {
   assert.deepEqual(after.jsonBody, counts);
 });
 
-test("clearing refuses an unauthenticated or unauthorized caller", async () => {
+test("clearing refuses an unauthenticated caller", async () => {
   const store = new MemoryHistoryStore();
   await store.append(userKey(OWNER), notification("mine", NOW.getTime()));
 
   const anonymous = await handleClearNotificationsRequest(request({}), {}, store);
   assert.equal(anonymous.status, 401);
-
-  const stranger = await handleClearNotificationsRequest(
-    signedIn(OTHER),
-    { AUTHORIZED_USERS: OWNER },
-    store,
-  );
-  assert.equal(stranger.status, 403);
 
   assert.equal(store.entries(userKey(OWNER)).length, 1);
 });
@@ -489,7 +481,7 @@ test("clearing refuses an unauthenticated or unauthorized caller", async () => {
 test("clearing reports storage that is not configured", async () => {
   const response = await handleClearNotificationsRequest(
     signedIn(OWNER),
-    { AUTHORIZED_USERS: OWNER },
+    {},
     null,
   );
 

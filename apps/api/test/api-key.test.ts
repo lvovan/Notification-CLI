@@ -13,7 +13,7 @@ import { userKey } from "@notification-cli/core/identity";
 
 const OWNER = "user@example.com";
 const OTHER = "someone.else@example.com";
-const env = { AUTHORIZED_USERS: `${OWNER};${OTHER}` };
+const env = {};
 const NOW = new Date("2026-03-15T12:00:00.000Z");
 const SCHEME = "Bearer";
 const MCP_URL = "https://notify.example.com/api/mcp";
@@ -228,7 +228,7 @@ test("resolution rejects unknown, empty, and foreign-looking keys", async () => 
   }
 });
 
-test("a key stops resolving when its owner leaves AUTHORIZED_USERS", async () => {
+test("a key that resolves to any email is accepted without an allowlist", async () => {
   const table = new FakeTable();
   const keys = store(table);
   const minted = await keys.ensure(OTHER);
@@ -237,20 +237,10 @@ test("a key stops resolving when its owner leaves AUTHORIZED_USERS", async () =>
     headers: new Headers({ "x-api-key": minted.apiKey }),
   };
 
-  assert.equal(
-    (await resolveApiKeyOwner(request, env, keys)).authorized,
-    true,
-  );
-  // Same key, same store; only the allowlist changed.
-  assert.deepEqual(
-    await resolveApiKeyOwner(request, { AUTHORIZED_USERS: OWNER }, keys),
-    { authorized: false },
-  );
-  // The key itself is untouched, so re-authorizing restores access.
-  assert.equal(
-    (await resolveApiKeyOwner(request, env, keys)).authorized,
-    true,
-  );
+  assert.deepEqual(await resolveApiKeyOwner(request, env, keys), {
+    authorized: true,
+    owner: { email: OTHER, userKey: userKey(OTHER) },
+  });
 });
 
 test("the owner row is keyed by the normalized address", async () => {
