@@ -3,7 +3,7 @@ import {
   authorizeBrowserRequest,
   browserAuthorizationError,
 } from "./auth.js";
-import { ConfigurationError } from "./configuration.js";
+import { ConfigurationError, optionalSetting } from "./configuration.js";
 import {
   VAPID_PUBLIC_KEY_ENV,
 } from "./fanout.js";
@@ -35,7 +35,7 @@ export function handlePushConfigRequest(
   if (!authorization.authorized) {
     return browserAuthorizationError(authorization);
   }
-  const publicKey = env[VAPID_PUBLIC_KEY_ENV]?.trim();
+  const publicKey = optionalSetting(env, VAPID_PUBLIC_KEY_ENV);
   if (!publicKey || !/^B[A-Za-z0-9_-]{86}$/.test(publicKey)) {
     return noStore({
       status: 503,

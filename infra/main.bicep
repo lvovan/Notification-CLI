@@ -21,6 +21,11 @@
   kept, so re-running it can never blank a value that was set out of band. See
   `siteExists` for how that is decided, and why it fails loudly rather than
   quietly erasing configuration.
+
+  Values it can neither derive nor read back are written as "TODO:"
+  placeholders, so every setting an operator still has to supply is listed in
+  the App Service configuration blade alongside a note saying what belongs
+  there. The server treats a placeholder as unset.
 */
 
 @description('Prefix for generated resource names. Lower-case letters and digits work best, because the storage account name is derived from it. Changing this on an existing deployment builds a second, empty copy of every resource rather than renaming anything.')
@@ -182,6 +187,31 @@ var derivedSettings = {
 }
 
 /*
+  Written only when nothing else supplies the setting, so every value an
+  operator has to fill in appears in the App Service configuration blade with a
+  note saying what belongs there. A missing setting is otherwise invisible.
+
+  The "TODO:" marker is what the server recognises to treat these as unset, so
+  a placeholder is never sent to Entra ID or used to sign a session cookie. It
+  must stay in step with PLACEHOLDER_PREFIX in packages/core.
+
+  NOTIFICATION_CLI_ENTRA_CLIENT_SECRET is deliberately absent: a tenant that
+  forbids secrets by policy signs in with the site managed identity instead, so
+  prompting for one would be advice to do the wrong thing.
+*/
+var placeholderPrefix = 'TODO:'
+
+var placeholderSettings = {
+  NOTIFICATION_CLI_ENTRA_TENANT_ID: '${placeholderPrefix} directory (tenant) ID of the Entra application, a GUID from its Overview blade'
+  NOTIFICATION_CLI_ENTRA_CLIENT_ID: '${placeholderPrefix} application (client) ID of the Entra application, a GUID from its Overview blade'
+  NOTIFICATION_CLI_SESSION_SECRET: '${placeholderPrefix} random secret signing the session cookie, at least 32 characters; changing it signs every browser out'
+  NOTIFICATION_CLI_VAPID_PUBLIC_KEY: '${placeholderPrefix} VAPID public key, 87 URL-safe characters starting with B; generate a pair with "npx web-push generate-vapid-keys"'
+  NOTIFICATION_CLI_VAPID_PRIVATE_KEY: '${placeholderPrefix} VAPID private key from the same generated pair; never share it'
+  NOTIFICATION_CLI_VAPID_SUBJECT: '${placeholderPrefix} VAPID contact URI, normally "mailto:you@example.com"'
+  NOTIFICATION_CLI_CLARITY_PROJECT_ID: '${placeholderPrefix} Microsoft Clarity project ID, or delete this setting to load no analytics tag'
+}
+
+/*
   Supplied by the caller. An empty parameter contributes nothing at all rather
   than an empty string, which is what makes "leave it blank to keep what is
   deployed" work: the merge below simply finds no newer value to apply.
@@ -197,9 +227,12 @@ var suppliedSettings = union(
   empty(clarityProjectId) ? {} : { NOTIFICATION_CLI_CLARITY_PROJECT_ID: clarityProjectId }
 )
 
-// Later arguments win, so a supplied value overrides the deployed one and the
-// derived connection strings override everything.
-var effectiveSettings = union(deployedSettings, derivedSettings, suppliedSettings)
+/*
+  Later arguments win, so a supplied value overrides the deployed one and the
+  derived connection strings override everything. Placeholders come first and
+  therefore lose to any real value, including one set by hand on the site.
+*/
+var effectiveSettings = union(placeholderSettings, deployedSettings, derivedSettings, suppliedSettings)
 
 /*
   The App Service host.
@@ -279,10 +312,10 @@ output webPubSubName string = webPubSub.name
 output storageAccountName string = storageAccount.name
 
 @description('Whether Web Push is configured. When false, notifications only reach open browser tabs.')
-output pushConfigured bool = contains(effectiveSettings, 'NOTIFICATION_CLI_VAPID_PUBLIC_KEY')
+output pushConfigured bool = !startsWith(effectiveSettings.NOTIFICATION_CLI_VAPID_PUBLIC_KEY, placeholderPrefix)
 
 @description('Whether browser analytics are configured. When false, no third-party tag is loaded.')
-output telemetryConfigured bool = contains(effectiveSettings, 'NOTIFICATION_CLI_CLARITY_PROJECT_ID')
+output telemetryConfigured bool = !startsWith(effectiveSettings.NOTIFICATION_CLI_CLARITY_PROJECT_ID, placeholderPrefix)
 
 @description('Name of the App Service host. Store this as the AZURE_APP_SERVICE_NAME repository variable.')
 output appServiceName string = appService.name

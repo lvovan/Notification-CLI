@@ -633,6 +633,15 @@ configure a manually created instance:
 | `NOTIFICATION_CLI_CLARITY_PROJECT_ID` | Optional. Microsoft Clarity project ID. Unset means no analytics tag is loaded and no third-party origin is allowed. See [Usage analytics](#usage-analytics) |
 | `NOTIFICATION_CLI_WEB_ROOT` | Optional path to the frontend files. Defaults to `web` next to the bundle |
 
+Every setting the template can neither derive nor read back off the site is
+created as a placeholder whose value begins with `TODO:` and describes what
+belongs there, so the Environment variables blade lists the whole job rather
+than leaving unset settings invisible. Replace the value to configure one; the
+server reads any value still carrying the marker as unset, so a placeholder is
+never sent to Entra ID or used to sign a cookie. Placeholders lose to every
+real value, including one set by hand, so re-running the template cannot
+overwrite a setting you have filled in.
+
 Real-time delivery through Web PubSub is the required core transport. The
 "push only" settings are an optional enhancement: when any of them is missing,
 notifications are still delivered live to open pages and the response reports

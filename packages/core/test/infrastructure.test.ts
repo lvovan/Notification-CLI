@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import { repoPath } from "./paths.js";
 import test from "node:test";
 import { API_KEYS_TABLE } from "@notification-cli/core/api-key-storage";
+import { PLACEHOLDER_PREFIX } from "@notification-cli/core/configuration";
+import { CLARITY_PROJECT_ID_ENV } from "@notification-cli/core/telemetry-log";
 import {
   VAPID_PRIVATE_KEY_ENV,
   VAPID_PUBLIC_KEY_ENV,
@@ -147,7 +149,7 @@ test("re-running the template keeps settings it was not given", async () => {
   // sign-in would break.
   assert.match(
     template,
-    /var effectiveSettings = union\(deployedSettings, derivedSettings, suppliedSettings\)/,
+    /var effectiveSettings = union\(placeholderSettings, deployedSettings, derivedSettings, suppliedSettings\)/,
   );
   assert.match(template, /list\('\$\{deployedSite\.id\}\/config\/appsettings'/);
 
@@ -160,6 +162,67 @@ test("re-running the template keeps settings it was not given", async () => {
       `${parameter} would blank the deployed setting when left empty`,
     );
   }
+});
+
+test("every setting an operator must supply is created as a placeholder", async () => {
+  const template = await readFile(templatePath, "utf8");
+
+  // A setting that is simply absent is invisible in the App Service
+  // configuration blade, so nothing tells the operator it exists. The template
+  // writes a described placeholder for each one instead, and the server treats
+  // the marker as unset.
+  assert.match(
+    template,
+    new RegExp(`var placeholderPrefix = '${PLACEHOLDER_PREFIX}'`),
+    "the template's placeholder marker no longer matches PLACEHOLDER_PREFIX",
+  );
+
+  for (const setting of [
+    "NOTIFICATION_CLI_ENTRA_TENANT_ID",
+    "NOTIFICATION_CLI_ENTRA_CLIENT_ID",
+    "NOTIFICATION_CLI_SESSION_SECRET",
+    VAPID_PUBLIC_KEY_ENV,
+    VAPID_PRIVATE_KEY_ENV,
+    VAPID_SUBJECT_ENV,
+    CLARITY_PROJECT_ID_ENV,
+  ]) {
+    assert.match(
+      template,
+      new RegExp(`${setting}: '\\$\\{placeholderPrefix\\} \\S`),
+      `infra/main.bicep creates no described placeholder for ${setting}`,
+    );
+  }
+
+  // The client secret is genuinely optional: a tenant that forbids secrets by
+  // policy signs in with the managed identity, so prompting for one would be
+  // advice to do the wrong thing.
+  assert.ok(
+    !new RegExp(
+      `NOTIFICATION_CLI_ENTRA_CLIENT_SECRET: '\\$\\{placeholderPrefix\\}`,
+    ).test(template),
+    "the optional client secret must not be advertised as something to fill in",
+  );
+
+  // Every placeholder is present in the merged settings, so a key-presence
+  // check would report each one as configured.
+  assert.ok(
+    !template.includes("contains(effectiveSettings"),
+    "a placeholder makes contains() report an unset setting as configured",
+  );
+});
+
+test("provisioning regenerates keys that are still placeholders", async () => {
+  const workflow = await readFile(workflowPath, "utf8");
+
+  // The workflow generates a session key and a VAPID pair only when the site
+  // lacks them. Once the template creates those settings as placeholders, a
+  // key-presence test reports them as already set and nothing is ever
+  // generated, leaving sign-in and Web Push permanently broken.
+  assert.ok(
+    !/jq -r --arg k "\$1" 'has\(\$k\)'/.test(workflow),
+    "infrastructure.yml treats a placeholder as a configured setting",
+  );
+  assert.match(workflow, new RegExp(`startswith\\("${PLACEHOLDER_PREFIX}"\\) \\| not`));
 });
 
 test("resource names match the deployed stack", async () => {

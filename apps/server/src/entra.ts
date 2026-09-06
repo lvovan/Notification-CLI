@@ -7,7 +7,7 @@ import {
   type ClientAssertionCallback,
   type NodeAuthOptions,
 } from "@azure/msal-node";
-import { requireSetting } from "@notification-cli/core/configuration";
+import { optionalSetting, requireSetting } from "@notification-cli/core/configuration";
 import { requestOrigin } from "./request.js";
 import { GLOBAL_HEADERS } from "./response.js";
 import { clientPrincipal, type SessionProvider } from "./session.js";
@@ -40,7 +40,7 @@ export interface EntraConfig {
 }
 
 export function readEntraConfig(env: NodeJS.ProcessEnv = process.env): EntraConfig {
-  const clientSecret = env[CLIENT_SECRET_ENV]?.trim();
+  const clientSecret = optionalSetting(env, CLIENT_SECRET_ENV);
   return {
     tenantId: requireSetting(env, TENANT_ID_ENV),
     clientId: requireSetting(env, CLIENT_ID_ENV),

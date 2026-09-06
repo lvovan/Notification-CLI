@@ -139,7 +139,14 @@ jobs:
           fi
 
           # Only the names are inspected; no value is ever printed or exported.
-          has() { [ "$(echo "$deployed" | jq -r --arg k "$1" 'has($k)')" = "true" ]; }
+          # A setting still holding a "TODO:" placeholder counts as absent: the
+          # template writes those so the blade lists every value an operator
+          # has to fill in, and they are prompts rather than configuration.
+          has() {
+            [ "$(jq -r --arg k "$1" \
+                 '.[$k] // "" | (. != "") and (startswith("TODO:") | not)' \
+                 <<<"$deployed")" = "true" ]
+          }
 
           params=$(jq -n \
             --arg prefix "$NAME_PREFIX" \
