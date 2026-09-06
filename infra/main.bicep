@@ -190,10 +190,6 @@ var derivedSettings = {
   NOTIFICATION_CLI_AZURE_WEB_PUBSUB_ENDPOINT: 'https://${webPubSub.properties.hostName}'
   NOTIFICATION_CLI_STORAGE_TABLE_ENDPOINT: storageAccount.properties.primaryEndpoints.table
   NOTIFICATION_CLI_RETENTION_DAYS: string(retentionDays)
-  // The package ships already bundled, so Oryx has nothing to build. The entry
-  // point comes from the generated package.json, which is why no startup
-  // command is configured below.
-  SCM_DO_BUILD_DURING_DEPLOYMENT: 'false'
 }
 
 /*
