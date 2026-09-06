@@ -497,6 +497,23 @@ account and local auth on Web PubSub are switched off, so the keys those
 services still hold cannot be used at all — including by the portal's key-based
 table browser.
 
+A connection string bundled two separate things: *which* resource to talk to,
+and *proof* that you may. Only the second is gone. The endpoints still name one
+specific account and one specific hub, derived by the template from the
+resources it just created, so the app is pointed at them as precisely as
+before:
+
+```bicep
+NOTIFICATION_CLI_AZURE_WEB_PUBSUB_ENDPOINT: 'https://${webPubSub.properties.hostName}'
+NOTIFICATION_CLI_STORAGE_TABLE_ENDPOINT: storageAccount.properties.primaryEndpoints.table
+```
+
+The proof is fetched per call instead of stored: the identity obtains a
+short-lived Entra token scoped to that resource. An endpoint pointing somewhere
+the identity holds no role therefore fails with `403` rather than silently
+working, and the endpoints themselves are public hostnames, so unlike the
+connection strings they replaced there is nothing in them to leak.
+
 Creating those role assignments needs **Owner** or **User Access
 Administrator** on the resource group. A Contributor can deploy everything else
 and will fail only on that pair. Running locally, the same code signs in as
