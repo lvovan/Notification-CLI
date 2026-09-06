@@ -63,10 +63,11 @@ in-process in `apps/server/src/entra.ts` for exactly that reason.
 
 2. **Choose the site name** and store it as the repository variable
    `AZURE_APP_SERVICE_NAME`. Every other resource name derives from it, so it
-   must end in `-wa`: `notification-cli-wa` produces the resource group
-   `notification-cli-rg`, the plan `notification-cli-asp`, the Web PubSub
-   instance `notification-cli-wps` and the storage account
-   `notificationclisto`.
+   must end in `-wa`: a site named `<prefix>-wa` produces the resource group
+   `<prefix>-rg`, the plan `<prefix>-asp`, the Web PubSub instance
+   `<prefix>-wps` and the storage account `<prefix>sto` (lowercased, hyphens
+   removed, truncated to 24 characters). Pass the provisioning workflow's
+   `resource_group` input if your group does not follow that rule.
 
    This is deliberately the same variable the deploy workflow uses. A separate
    name input would be free to drift from it, and pointing provisioning at a
@@ -130,10 +131,10 @@ in-process in `apps/server/src/entra.ts` for exactly that reason.
 
    ```powershell
    az webapp config hostname add --webapp-name <site> `
-     --resource-group notification-cli-rg --hostname <notify.example.com>
-   az webapp config ssl create --resource-group notification-cli-rg `
+     --resource-group <resource-group> --hostname <notify.example.com>
+   az webapp config ssl create --resource-group <resource-group> `
      --name <site> --hostname <notify.example.com>
-   az webapp config ssl bind --resource-group notification-cli-rg `
+   az webapp config ssl bind --resource-group <resource-group> `
      --name <site> --certificate-thumbprint <thumbprint> --ssl-type SNI
    ```
 
@@ -240,7 +241,7 @@ exposed API, no app roles, no Graph permissions.
 
    ```powershell
    $principal = az webapp identity assign --name <site> `
-     --resource-group notification-cli-rg --query principalId --output tsv
+     --resource-group <resource-group> --query principalId --output tsv
 
    az ad app federated-credential create --id <app-id> --parameters (@{
      name = "notification-cli-app-service"
