@@ -26,7 +26,7 @@
 @description('Prefix for generated resource names. Lower-case letters and digits work best, because the storage account name is derived from it. Changing this on an existing deployment builds a second, empty copy of every resource rather than renaming anything.')
 @minLength(3)
 @maxLength(24)
-param namePrefix string = 'notification-cli'
+param namePrefix string = 'notification-lvovan'
 
 @description('Azure region for every resource. Defaults to the resource group location; existing deployments must keep using the region their resources were created in.')
 param location string = resourceGroup().location
