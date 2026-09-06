@@ -26,6 +26,35 @@ const workflowPath = repoPath(".github", "workflows", "infrastructure.yml");
 const deployWorkflowPath = repoPath(".github", "workflows", "deploy.yml");
 const azdParametersPath = repoPath("infra", "main.parameters.json");
 
+test("private storage access joins the site to a network that can reach the endpoint", async () => {
+  const template = await readFile(templatePath, "utf8");
+
+  // Each piece is useless without the others: an endpoint nothing routes to, a
+  // zone nothing resolves against, or a site that still leaves via the public
+  // internet all fail the same way, with AuthorizationFailure on every table.
+  assert.match(template, /param privateStorageAccess bool = false/);
+  assert.match(template, /Microsoft\.Network\/privateEndpoints@/);
+  assert.match(template, /groupIds: \['table'\]/);
+  assert.match(template, /Microsoft\.Network\/privateDnsZones@/);
+  assert.match(template, /privatelink\.table\.\$\{environment\(\)\.suffixes\.storage\}/);
+  assert.match(template, /Microsoft\.Network\/privateDnsZones\/virtualNetworkLinks@/);
+  assert.match(template, /Microsoft\.Network\/privateEndpoints\/privateDnsZoneGroups@/);
+  assert.match(template, /vnetRouteAllEnabled: privateStorageAccess/);
+  assert.match(template, /virtualNetworkSubnetId: resourceId\(/);
+
+  // App Service refuses to join a subnet it does not own.
+  assert.match(template, /serviceName: 'Microsoft\.Web\/serverFarms'/);
+
+  // Everything network-related must stay optional, or the default deployment
+  // starts paying for a private endpoint it does not need.
+  const networkResources = template.match(/^resource \w+ 'Microsoft\.Network\//gm) ?? [];
+  assert.equal(networkResources.length, 5);
+  for (const declaration of networkResources) {
+    const line = template.split("\n").find((candidate) => candidate.startsWith(declaration));
+    assert.match(line ?? "", /= if \(privateStorageAccess\)/, declaration);
+  }
+});
+
 test("azd can set every parameter the template accepts", async () => {
   const template = await readFile(templatePath, "utf8");
   const parameters = JSON.parse(await readFile(azdParametersPath, "utf8"));

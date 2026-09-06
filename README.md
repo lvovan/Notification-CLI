@@ -680,6 +680,34 @@ that never happens.
 `az deployment group validate` is the stricter check, because it runs resource
 provider preflight and so catches what `what-if` cannot.
 
+### When storage refuses every request
+
+Some subscriptions run a governance policy that forces `publicNetworkAccess` to
+`Disabled` on every storage account, and silently reverts any attempt to set it
+back — `az storage account update` reports success and the property stays
+`Disabled`. The site signs users in normally and then fails every data call:
+
+```
+Unable to load metrics: The request could not be completed.
+```
+
+Storage answers `AuthorizationFailure` regardless of the roles held, because
+network rules are evaluated before RBAC. Check for it with:
+
+```powershell
+az storage account show --name <account> --resource-group <resource-group> `
+  --query publicNetworkAccess --output tsv
+```
+
+Deploy with `privateStorageAccess=true` to route Table Storage over a private
+endpoint instead. That adds a virtual network, a private endpoint and a private
+DNS zone, joins the site to the network and sends its outbound traffic through
+it, so the account's own hostname resolves to a private address. The private
+endpoint is billed hourly, so it is off by default.
+
+Service endpoints are not an alternative: they still arrive at the public
+endpoint, which is what the policy switches off.
+
 Drop `siteExists=false` once the site exists, and pass any of
 `entraTenantId`, `entraClientId`, `entraClientSecret`, `sessionSecret`,
 `vapidPublicKey`, `vapidPrivateKey`, `vapidSubject` or `clarityProjectId` to
@@ -716,8 +744,7 @@ configure a manually created instance:
 | `NOTIFICATION_CLI_ENTRA_TENANT_ID` | Directory of the Entra application used to sign users in |
 | `NOTIFICATION_CLI_ENTRA_CLIENT_ID` | Application ID of that registration |
 | `NOTIFICATION_CLI_ENTRA_CLIENT_SECRET` | Client secret of that registration. Optional: unset means a managed-identity assertion, or no credential at all for a public client |
-| `NOTIFICATION_CLI_ENTRA_USE_MANAGED_IDENTITY` | `true` to prove the client with the site's managed identity, which needs a matching federated credential on the registration. Anything else signs in as a public client |
-| `NOTIFICATION_CLI_SESSION_SECRET` | The HMAC key signing the sign-in cookie; generate 32 random bytes as shown in [Hosting](#hosting). Changing it signs every browser out |
+| `NOTIFICATION_CLI_ENTRA_USE_MANAGED_IDENTITY` | `true` to prove the client with the site's managed identity, which needs a matching federated credential on the registration. Anything else signs in as a public client || `NOTIFICATION_CLI_SESSION_SECRET` | The HMAC key signing the sign-in cookie; generate 32 random bytes as shown in [Hosting](#hosting). Changing it signs every browser out |
 | `NOTIFICATION_CLI_CLARITY_PROJECT_ID` | Optional. Microsoft Clarity project ID. Unset means no analytics tag is loaded and no third-party origin is allowed. See [Usage analytics](#usage-analytics) |
 | `NOTIFICATION_CLI_WEB_ROOT` | Optional path to the frontend files. Defaults to `web` next to the bundle |
 

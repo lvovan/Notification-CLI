@@ -85,6 +85,9 @@ param entraClientSecret string = ''
 @secure()
 param sessionSecret string = ''
 
+@description('Route Table Storage over a private endpoint instead of its public endpoint. Required where governance policy forces publicNetworkAccess to Disabled on storage accounts, which blocks the site from reading a single table. Adds a virtual network, a private endpoint and a private DNS zone, so it costs more than the public endpoint.')
+param privateStorageAccess bool = false
+
 @description('Microsoft Clarity project ID. Leave empty to keep the deployed value; unset entirely means no analytics tag is loaded.')
 param clarityProjectId string = ''
 
@@ -290,17 +293,140 @@ resource appService 'Microsoft.Web/sites@2024-11-01' = {
   identity: {
     type: 'SystemAssigned'
   }
+  properties: union(
+    {
+      serverFarmId: appServicePlan.id
+      httpsOnly: true
+      siteConfig: {
+        linuxFxVersion: 'NODE|24-lts'
+        alwaysOn: true
+        ftpsState: 'Disabled'
+        http20Enabled: true
+        minTlsVersion: '1.2'
+        // Send outbound traffic through the virtual network, which is what makes
+        // the site resolve the storage hostname to its private address.
+        vnetRouteAllEnabled: privateStorageAccess
+      }
+    },
+    privateStorageAccess
+      ? {
+          virtualNetworkSubnetId: resourceId(
+            'Microsoft.Network/virtualNetworks/subnets',
+            vnetName,
+            integrationSubnetName
+          )
+        }
+      : {}
+  )
+  dependsOn: [virtualNetwork]
+}
+
+/*
+  Private access to Table Storage.
+
+  Some subscriptions run a governance policy that forces publicNetworkAccess to
+  Disabled on every storage account and silently reverts any attempt to set it
+  back. Storage then answers every data-plane request with AuthorizationFailure
+  no matter which role the caller holds, because network rules are evaluated
+  before RBAC. A private endpoint is the only way in, and reaching it needs the
+  site joined to a network that can resolve and route to it.
+
+  Service endpoints are not an alternative: they still arrive at the public
+  endpoint, which is exactly what the policy switches off.
+*/
+var vnetName = '${namePrefix}-vnet'
+// Delegated to App Service, which claims the whole subnet for outbound traffic.
+var integrationSubnetName = 'appservice'
+var privateEndpointSubnetName = 'privatelink'
+var tablePrivateDnsZoneName = 'privatelink.table.${environment().suffixes.storage}'
+
+resource virtualNetwork 'Microsoft.Network/virtualNetworks@2024-05-01' = if (privateStorageAccess) {
+  name: vnetName
+  location: location
   properties: {
-    serverFarmId: appServicePlan.id
-    httpsOnly: true
-    siteConfig: {
-      linuxFxVersion: 'NODE|24-lts'
-      alwaysOn: true
-      ftpsState: 'Disabled'
-      http20Enabled: true
-      minTlsVersion: '1.2'
+    addressSpace: {
+      addressPrefixes: ['10.10.0.0/16']
+    }
+    subnets: [
+      {
+        name: integrationSubnetName
+        properties: {
+          addressPrefix: '10.10.1.0/24'
+          delegations: [
+            {
+              name: 'appservice'
+              properties: {
+                serviceName: 'Microsoft.Web/serverFarms'
+              }
+            }
+          ]
+        }
+      }
+      {
+        name: privateEndpointSubnetName
+        properties: {
+          addressPrefix: '10.10.2.0/24'
+        }
+      }
+    ]
+  }
+}
+
+resource tablePrivateDnsZone 'Microsoft.Network/privateDnsZones@2024-06-01' = if (privateStorageAccess) {
+  name: tablePrivateDnsZoneName
+  location: 'global'
+}
+
+// Without this link the zone exists but the site still resolves the public IP.
+resource tablePrivateDnsZoneLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = if (privateStorageAccess) {
+  parent: tablePrivateDnsZone
+  name: '${vnetName}-link'
+  location: 'global'
+  properties: {
+    registrationEnabled: false
+    virtualNetwork: {
+      id: virtualNetwork.id
     }
   }
+}
+
+resource tablePrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = if (privateStorageAccess) {
+  name: '${namePrefix}-table-pe'
+  location: location
+  properties: {
+    subnet: {
+      id: resourceId('Microsoft.Network/virtualNetworks/subnets', vnetName, privateEndpointSubnetName)
+    }
+    privateLinkServiceConnections: [
+      {
+        name: 'table'
+        properties: {
+          privateLinkServiceId: storageAccount.id
+          // Only the table endpoint is reached privately; nothing else is used.
+          groupIds: ['table']
+        }
+      }
+    ]
+  }
+  dependsOn: [virtualNetwork]
+}
+
+// Publishes the endpoint's address into the zone, so the account's own
+// hostname resolves privately and the SDK needs no special endpoint.
+resource tablePrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = if (privateStorageAccess) {
+  parent: tablePrivateEndpoint
+  name: 'default'
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'table'
+        properties: {
+          privateDnsZoneId: tablePrivateDnsZone.id
+        }
+      }
+    ]
+  }
+  dependsOn: [tablePrivateDnsZoneLink]
 }
 
 /*
