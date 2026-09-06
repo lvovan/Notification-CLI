@@ -506,9 +506,9 @@ the Actions tab and choose:
 There is no name input. Every resource name derives from the
 `AZURE_APP_SERVICE_NAME` repository variable, which must end in `-wa`:
 
-| Variable value | Resource group | Plan | Web PubSub | Storage |
+| Variable value | Plan | Web PubSub | Storage | Default group |
 | --- | --- | --- | --- | --- |
-| `notification-cli-wa` | `notification-cli-rg` | `notification-cli-asp` | `notification-cli-wps` | `notificationclisto` |
+| `notification-lvovan-wa` | `notification-lvovan-asp` | `notification-lvovan-wps` | `notificationlvovansto` | `notification-lvovan-rg` |
 
 One variable rather than two is a safety property, not a convenience. Resource
 names are how a deployment finds what already exists; a name that resolves to
@@ -585,9 +585,9 @@ This is the route that works without any Azure credentials in the repository.
 
 ```powershell
 az deployment group create `
-  --resource-group notification-cli-rg `
+  --resource-group notify-rg `
   --template-file infra\main.bicep `
-  --parameters namePrefix=notification-cli
+  --parameters namePrefix=notification-lvovan siteExists=false
 ```
 
 Preview first with `az deployment group what-if` and the same arguments. A
@@ -606,7 +606,7 @@ that never happens.
 `az deployment group validate` is the stricter check, because it runs resource
 provider preflight and so catches what `what-if` cannot.
 
-Add `siteExists=false` on a first deployment, and pass any of
+Drop `siteExists=false` once the site exists, and pass any of
 `entraTenantId`, `entraClientId`, `entraClientSecret`, `sessionSecret`,
 `vapidPublicKey`, `vapidPrivateKey`, `vapidSubject` or `clarityProjectId` to
 set them. Omit a parameter to keep whatever the site already has.
