@@ -16,6 +16,12 @@ export const TENANT_ID_ENV = "NOTIFICATION_CLI_ENTRA_TENANT_ID";
 export const CLIENT_ID_ENV = "NOTIFICATION_CLI_ENTRA_CLIENT_ID";
 export const CLIENT_SECRET_ENV = "NOTIFICATION_CLI_ENTRA_CLIENT_SECRET";
 export const SESSION_SECRET_ENV = "NOTIFICATION_CLI_SESSION_SECRET";
+/**
+ * Set to "true" only once a federated identity credential for this site's
+ * principal exists on the app registration. Anything else keeps the sign-in on
+ * the public-client flow, which needs no credential at all.
+ */
+export const USE_MANAGED_IDENTITY_ENV = "NOTIFICATION_CLI_ENTRA_USE_MANAGED_IDENTITY";
 
 /** The audience Entra ID requires of a federated client assertion. */
 const TOKEN_EXCHANGE_AUDIENCE = "api://AzureADTokenExchange";
@@ -52,14 +58,20 @@ export function readEntraConfig(env: NodeJS.ProcessEnv = process.env): EntraConf
 /**
  * Proves the client's identity to the token endpoint, if it has to.
  *
- * Three arrangements work, and the first that is available is used:
+ * Three arrangements work:
  *
  * 1. A client secret, when one is configured.
  * 2. A federated assertion from the App Service managed identity, for a tenant
- *    whose policy blocks secrets. Nothing secret is stored and nothing expires.
+ *    whose policy blocks secrets. Nothing secret is stored and nothing expires,
+ *    but it only works once a federated identity credential naming this site's
+ *    principal exists on the app registration, so it has to be asked for.
  * 3. Nothing at all. The authorization code is already bound to this server by
  *    PKCE, so a public-client registration needs no credential — the simplest
  *    arrangement, and the only one needing no Azure-side plumbing.
+ *
+ * The managed identity is never assumed: App Service always sets
+ * IDENTITY_ENDPOINT, so inferring from it would send an assertion that a public
+ * client cannot use and that Entra ID rejects with AADSTS70025.
  */
 export type AssertionSource = () => Promise<string>;
 
@@ -93,7 +105,7 @@ export function clientCredential(
   if (config.clientSecret) {
     return { clientSecret: config.clientSecret };
   }
-  if (env.IDENTITY_ENDPOINT && env.IDENTITY_HEADER) {
+  if (optionalSetting(env, USE_MANAGED_IDENTITY_ENV)?.toLowerCase() === "true") {
     const callback: ClientAssertionCallback = () => assertion();
     return { clientAssertion: callback };
   }

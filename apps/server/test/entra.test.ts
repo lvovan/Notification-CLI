@@ -10,6 +10,7 @@ import {
   createMsalAuthClient,
   parseCookies,
   readEntraConfig,
+  USE_MANAGED_IDENTITY_ENV,
   type AuthClient,
   type EntraConfig,
 } from "../src/entra.js";
@@ -107,20 +108,44 @@ test("the client secret is optional", () => {
   );
 });
 
-test("a secret is preferred, then a managed identity, then nothing at all", async () => {
+test("a secret is preferred, then an opted-in managed identity, then nothing at all", async () => {
+  // App Service always sets these, so they must not by themselves select the
+  // managed identity: a public client that sends an assertion is rejected with
+  // AADSTS70025, and the federated credential has to be created by hand anyway.
   const identity = { IDENTITY_ENDPOINT: "http://identity", IDENTITY_HEADER: "header" };
+  const optedIn = { ...identity, [USE_MANAGED_IDENTITY_ENV]: "true" };
 
-  assert.deepEqual(clientCredential(CONFIG, () => Promise.reject(new Error("unused")), identity), {
+  assert.deepEqual(clientCredential(CONFIG, () => Promise.reject(new Error("unused")), optedIn), {
     clientSecret: "secret",
   });
 
-  const federated = clientCredential(PUBLIC_CONFIG, () => Promise.resolve("assertion"), identity);
+  const federated = clientCredential(PUBLIC_CONFIG, () => Promise.resolve("assertion"), optedIn);
   const assertionCallback = federated.clientAssertion as ClientAssertionCallback;
   assert.equal(typeof assertionCallback, "function");
   assert.equal(await assertionCallback({ clientId: "client" }), "assertion");
 
   // PKCE alone binds the code to this server, so a public client sends nothing.
   assert.deepEqual(clientCredential(PUBLIC_CONFIG, () => Promise.resolve("unused"), {}), {});
+  assert.deepEqual(clientCredential(PUBLIC_CONFIG, () => Promise.resolve("unused"), identity), {});
+
+  // An unconfigured placeholder must never read as an opt-in.
+  for (const value of ["TODO: set to true once a credential exists", "false", "", "yes"]) {
+    assert.deepEqual(
+      clientCredential(PUBLIC_CONFIG, () => Promise.resolve("unused"), {
+        ...identity,
+        [USE_MANAGED_IDENTITY_ENV]: value,
+      }),
+      {},
+      `${value} must not enable the managed identity`,
+    );
+  }
+
+  assert.ok(
+    clientCredential(PUBLIC_CONFIG, () => Promise.resolve("a"), {
+      ...identity,
+      [USE_MANAGED_IDENTITY_ENV]: "TRUE",
+    }).clientAssertion,
+  );
 });
 
 test("MSAL accepts every credential arrangement", () => {

@@ -251,20 +251,34 @@ exposed API, no app roles, no Graph permissions.
    } | ConvertTo-Json -Compress)
    ```
 
+   Then set `NOTIFICATION_CLI_ENTRA_USE_MANAGED_IDENTITY` to `true`, or pass
+   `entraUseManagedIdentity=true`. Nothing is inferred: App Service always
+   exposes an identity endpoint, so a site that guessed from it would send an
+   assertion that a public-client registration cannot use, and Entra ID would
+   answer `AADSTS70025`.
+
    The issuer must name the directory the **managed identity** lives in, as a
    GUID, even when `NOTIFICATION_CLI_ENTRA_TENANT_ID` is `common` for sign-in:
    one is where the site's identity comes from, the other is who may sign in.
    `az account show --query tenantId` gives it.
 
+   **The identity and the app registration must share a tenant.** A directory
+   commonly refuses any other issuer outright:
+
+   ```
+   FederatedIdentityCredential.Issuer value '...' not allowed as per assigned policy
+   ```
+
+   Crossing tenants needs a multitenant registration provisioned into the
+   identity's directory, which the same class of policy usually also forbids.
+   Where the site cannot be moved into the registration's tenant, the
+   public-client flow above is the arrangement that works.
+
    The site then reads a token for `api://AzureADTokenExchange` from the local
    identity endpoint and presents it as a `client_assertion` during the code
    exchange. A rejected assertion surfaces as a `502` quoting Entra ID's own
    description; the cause is almost always a subject that no longer matches the
-   principal ID, which changes if the identity is disabled and re-enabled.
-
-   An assertion is only attempted when the site actually has a managed
-   identity. Without one, and without a secret, the exchange simply carries no
-   credential — so enabling the identity is what switches this on.
+   principal ID, which changes if the site is deleted and recreated.
 
 4. **Leave API permissions alone.** The sign-in requests `openid profile email`
    and nothing else. These are OpenID Connect scopes, granted by the identity
@@ -702,6 +716,7 @@ configure a manually created instance:
 | `NOTIFICATION_CLI_ENTRA_TENANT_ID` | Directory of the Entra application used to sign users in |
 | `NOTIFICATION_CLI_ENTRA_CLIENT_ID` | Application ID of that registration |
 | `NOTIFICATION_CLI_ENTRA_CLIENT_SECRET` | Client secret of that registration. Optional: unset means a managed-identity assertion, or no credential at all for a public client |
+| `NOTIFICATION_CLI_ENTRA_USE_MANAGED_IDENTITY` | `true` to prove the client with the site's managed identity, which needs a matching federated credential on the registration. Anything else signs in as a public client |
 | `NOTIFICATION_CLI_SESSION_SECRET` | The HMAC key signing the sign-in cookie; generate 32 random bytes as shown in [Hosting](#hosting). Changing it signs every browser out |
 | `NOTIFICATION_CLI_CLARITY_PROJECT_ID` | Optional. Microsoft Clarity project ID. Unset means no analytics tag is loaded and no third-party origin is allowed. See [Usage analytics](#usage-analytics) |
 | `NOTIFICATION_CLI_WEB_ROOT` | Optional path to the frontend files. Defaults to `web` next to the bundle |

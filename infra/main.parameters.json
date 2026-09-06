@@ -37,6 +37,9 @@
     },
     "clarityProjectId": {
       "value": "${NOTIFICATION_CLI_CLARITY_PROJECT_ID=}"
+    },
+    "entraUseManagedIdentity": {
+      "value": "${NOTIFICATION_CLI_ENTRA_USE_MANAGED_IDENTITY=}"
     }
   }
 }

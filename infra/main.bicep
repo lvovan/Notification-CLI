@@ -88,6 +88,14 @@ param sessionSecret string = ''
 @description('Microsoft Clarity project ID. Leave empty to keep the deployed value; unset entirely means no analytics tag is loaded.')
 param clarityProjectId string = ''
 
+@description('Set to "true" only once a federated identity credential naming appServicePrincipalId exists on the app registration, and its tenant allows that issuer. Anything else signs in as a public client, which needs no credential. Leave empty to keep the deployed value.')
+@allowed([
+  ''
+  'true'
+  'false'
+])
+param entraUseManagedIdentity string = ''
+
 /*
   Storage account names are globally unique, lower-case, alphanumeric and at
   most 24 characters, so they cannot simply reuse the prefix. The derived name
@@ -215,6 +223,7 @@ var placeholderSettings = {
   NOTIFICATION_CLI_VAPID_PRIVATE_KEY: '${placeholderPrefix} VAPID private key from the same generated pair; never share it'
   NOTIFICATION_CLI_VAPID_SUBJECT: '${placeholderPrefix} VAPID contact URI, normally "mailto:you@example.com"'
   NOTIFICATION_CLI_CLARITY_PROJECT_ID: '${placeholderPrefix} Microsoft Clarity project ID, or delete this setting to load no analytics tag'
+  NOTIFICATION_CLI_ENTRA_USE_MANAGED_IDENTITY: '${placeholderPrefix} set to "true" only after adding a federated identity credential for appServicePrincipalId to the app registration; anything else signs in as a public client, which needs no credential'
 }
 
 /*
@@ -230,7 +239,10 @@ var suppliedSettings = union(
   empty(vapidPublicKey) ? {} : { NOTIFICATION_CLI_VAPID_PUBLIC_KEY: vapidPublicKey },
   empty(vapidPrivateKey) ? {} : { NOTIFICATION_CLI_VAPID_PRIVATE_KEY: vapidPrivateKey },
   empty(vapidSubject) ? {} : { NOTIFICATION_CLI_VAPID_SUBJECT: vapidSubject },
-  empty(clarityProjectId) ? {} : { NOTIFICATION_CLI_CLARITY_PROJECT_ID: clarityProjectId }
+  empty(clarityProjectId) ? {} : { NOTIFICATION_CLI_CLARITY_PROJECT_ID: clarityProjectId },
+  empty(entraUseManagedIdentity)
+    ? {}
+    : { NOTIFICATION_CLI_ENTRA_USE_MANAGED_IDENTITY: entraUseManagedIdentity }
 )
 
 /*
