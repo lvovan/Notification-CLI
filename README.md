@@ -61,41 +61,44 @@ in-process in `apps/server/src/entra.ts` for exactly that reason.
    the walkthrough, including which tenant value to use and why no API
    permissions need configuring.
 
-2. **Store the infrastructure configuration** as repository variables
-   `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID`, and repository secrets
-   `ENTRA_CLIENT_SECRET` and `SESSION_SECRET`. `ENTRA_CLIENT_SECRET` may be
-   left empty; see the credential options below.
+2. **Choose the site name** and store it as the repository variable
+   `AZURE_APP_SERVICE_NAME`. Every other resource name derives from it, so it
+   must end in `-wa`: `notification-cli-wa` produces the resource group
+   `notification-cli-rg`, the plan `notification-cli-asp`, the Web PubSub
+   instance `notification-cli-wps` and the storage account
+   `notificationclisto`.
 
-   The session secret is the HMAC key that signs the sign-in cookie and the
-   cookie carrying the OAuth `state` and PKCE verifier, so it is what stops
-   either from being forged. Generate 32 random bytes — there is nothing to
-   look up, and no format to match:
+   This is deliberately the same variable the deploy workflow uses. A separate
+   name input would be free to drift from it, and pointing provisioning at a
+   stack that does not exist creates a second, empty copy of everything rather
+   than failing.
 
-   ```powershell
-   [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
-   ```
+3. **Store the remaining configuration** as repository variables
+   `ENTRA_TENANT_ID` and `ENTRA_CLIENT_ID`, plus optionally `VAPID_SUBJECT`
+   (a `mailto:` address enabling Web Push) and `CLARITY_PROJECT_ID`.
 
-   ```bash
-   openssl rand -base64 32
-   ```
+   Application secrets are **not** stored in the repository. The session
+   signing key and the VAPID key pair are generated during the first
+   provisioning run and kept on the site from then on; see
+   [Provision Azure resources](#provision-azure-resources) for how re-runs
+   preserve them.
 
-   Use a cryptographic generator, not a passphrase or `Get-Random`: the
-   cookie's resistance to forgery is exactly the entropy of this value. Keep
-   one value per deployment — every instance of a site must share it, and
-   changing it signs every browser out.
+   Provisioning also needs `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and
+   `AZURE_SUBSCRIPTION_ID` as repository secrets, identifying a federated
+   Entra application allowed to deploy into the subscription. Without them,
+   run the deployment locally instead — the workflow says so and stops.
 
-3. **Provision** by running the infrastructure workflow in `deploy` mode. It
-   creates `<name_prefix>-wa` and reports that site name in the run summary.
-   Nothing can be published before this step: an unprovisioned site fails the
-   deploy workflow with `Publish profile is invalid`.
+4. **Provision** by running the infrastructure workflow in `deploy` mode with
+   `first_deployment` ticked, which is what tells it the site does not exist
+   yet. Nothing can be published before this step: an unprovisioned site fails
+   the deploy workflow with `Publish profile is invalid`.
 
-4. **Publish** by setting the repository variable `AZURE_APP_SERVICE_NAME` to
-   the site name reported by that run, and storing the site's publish profile
-   as the secret `AZURE_APP_SERVICE_PUBLISH_PROFILE`:
+5. **Publish** by storing the site's publish profile as the secret
+   `AZURE_APP_SERVICE_PUBLISH_PROFILE`:
 
    ```powershell
    az webapp deployment list-publishing-profiles `
-     --name <site> --resource-group notification-cli --xml
+     --name <site> --resource-group <site-without-wa>-rg --xml
    ```
 
    The profile is only issued while SCM basic authentication is enabled, which
@@ -103,7 +106,7 @@ in-process in `apps/server/src/entra.ts` for exactly that reason.
    returns nothing:
 
    ```powershell
-   az resource update --resource-group notification-cli `
+   az resource update --resource-group <site-without-wa>-rg `
      --namespace Microsoft.Web --resource-type basicPublishingCredentialsPolicies `
      --name scm --parent sites/<site> --set properties.allow=true
    ```
@@ -121,16 +124,16 @@ in-process in `apps/server/src/entra.ts` for exactly that reason.
    The deploy workflow fails loudly if either `AZURE_APP_SERVICE_NAME` or
    `AZURE_APP_SERVICE_PUBLISH_PROFILE` is missing.
 
-5. **Add a custom domain and certificate**, if you use one. The infrastructure
+6. **Add a custom domain and certificate**, if you use one. The infrastructure
    template does not bind App Service hostnames. App Service issues a free
    managed certificate on B1, but only after the hostname is bound:
 
    ```powershell
    az webapp config hostname add --webapp-name <site> `
-     --resource-group notification-cli --hostname <notify.example.com>
-   az webapp config ssl create --resource-group notification-cli `
+     --resource-group notification-cli-rg --hostname <notify.example.com>
+   az webapp config ssl create --resource-group notification-cli-rg `
      --name <site> --hostname <notify.example.com>
-   az webapp config ssl bind --resource-group notification-cli `
+   az webapp config ssl bind --resource-group notification-cli-rg `
      --name <site> --certificate-thumbprint <thumbprint> --ssl-type SNI
    ```
 
@@ -237,7 +240,7 @@ exposed API, no app roles, no Graph permissions.
 
    ```powershell
    $principal = az webapp identity assign --name <site> `
-     --resource-group notification-cli --query principalId --output tsv
+     --resource-group notification-cli-rg --query principalId --output tsv
 
    az ad app federated-credential create --id <app-id> --parameters (@{
      name = "notification-cli-app-service"
@@ -496,12 +499,47 @@ the Actions tab and choose:
 | Input | Meaning |
 | --- | --- |
 | `mode` | `what-if` prints the changes without applying them, `deploy` applies them |
-| `resource_group` | Target resource group. Created automatically in `deploy` mode |
-| `location` | Azure region for the resources |
-| `name_prefix` | Prefix for the generated resource names |
+| `location` | Azure region. Only used when creating resources; existing ones keep theirs |
+| `first_deployment` | Tick only when the App Service site does not exist yet |
+
+There is no name input. Every resource name derives from the
+`AZURE_APP_SERVICE_NAME` repository variable, which must end in `-wa`:
+
+| Variable value | Resource group | Plan | Web PubSub | Storage |
+| --- | --- | --- | --- | --- |
+| `notification-cli-wa` | `notification-cli-rg` | `notification-cli-asp` | `notification-cli-wps` | `notificationclisto` |
+
+One variable rather than two is a safety property, not a convenience. Resource
+names are how a deployment finds what already exists; a name that resolves to
+nothing is not an error, it is a brand new resource. A separate input free to
+drift from the deploy workflow's variable would provision a second, empty stack
+whose storage account holds none of the existing API keys, push subscriptions
+or notification history.
 
 `what-if` requires the resource group to exist, because a preview must not
 change anything. Run `deploy` first, or create the group by hand.
+
+#### Settings are preserved, not re-supplied
+
+The template reads the running site's application settings and keeps every
+value it was not explicitly given. So the Entra registration, the session
+signing key, the VAPID pair and the analytics ID are configured once and
+survive every later run, without being stored as repository secrets.
+
+This is why `first_deployment` exists, and why it defaults to off. The two ways
+of getting it wrong are not equally bad: claiming the site exists when it does
+not fails with a plain "not found", while claiming it does not exist when it
+does would silently erase its configuration. The safe answer is the default,
+and a first deployment has to say so deliberately.
+
+The first run generates what it cannot be given: a session signing key always,
+and a VAPID key pair when `VAPID_SUBJECT` is set. Push services use that
+subject to contact the sender, so it is a real address and cannot be invented —
+without it the run warns and leaves push off, and notifications reach only open
+browser tabs.
+
+The trade-off is that a setting the template no longer knows about is kept
+rather than removed. Delete retired settings from the site by hand.
 
 The workflow signs in with OpenID Connect, so no publishing profile or Azure
 client secret is stored for provisioning. Register a federated credential on an
@@ -512,38 +550,52 @@ app registration with the Contributor role over the resource group, then set:
 | `AZURE_CLIENT_ID` | Application (client) ID of the app registration |
 | `AZURE_TENANT_ID` | Directory (tenant) ID |
 | `AZURE_SUBSCRIPTION_ID` | Target subscription |
-| `VAPID_PUBLIC_KEY` | Web Push public key. Leave unset to deploy without push |
-| `VAPID_PRIVATE_KEY` | Web Push private key |
-| `ENTRA_CLIENT_SECRET` | Optional client secret for the browser sign-in registration |
-| `SESSION_SECRET` | HMAC key for the sign-in and OAuth flow cookies |
+
+Those three are the only secrets provisioning needs. If they are absent the
+workflow stops before signing in and says so, rather than failing later with an
+authentication error that names the wrong cause.
 
 | Repository variable | Purpose |
 | --- | --- |
+| `AZURE_APP_SERVICE_NAME` | **Required.** Site name, ending in `-wa`. Every other resource name derives from it |
 | `ENTRA_TENANT_ID` | Tenant value for browser sign-in, such as `common` or a tenant GUID |
 | `ENTRA_CLIENT_ID` | Application (client) ID of the browser sign-in registration |
-| `VAPID_SUBJECT` | Contact URI such as `mailto:you@example.com` |
+| `VAPID_SUBJECT` | Contact URI such as `mailto:you@example.com`. Enables Web Push on a first deployment |
+| `CLARITY_PROJECT_ID` | Optional. Microsoft Clarity project for [usage analytics](#usage-analytics) |
 | `NOTIFICATION_CLI_RETENTION_DAYS` | Optional. Defaults to `7` |
 
-After a successful `deploy`, the run summary reports the App Service name and
-hostname. Store the name as the `AZURE_APP_SERVICE_NAME` repository variable,
-then download the site's publish profile and store it as the
-`AZURE_APP_SERVICE_PUBLISH_PROFILE` repository secret for the deploy workflow.
+The variables above are passed on every run, so changing one takes effect on
+the next `deploy`. Leaving one unset is not the same as setting it empty: an
+unset variable is simply not passed, and therefore cannot blank the value the
+site is already running with.
+
+After a successful `deploy`, the run summary reports the App Service hostname
+and the managed identity object ID. Download the site's publish profile and
+store it as the `AZURE_APP_SERVICE_PUBLISH_PROFILE` repository secret for the
+deploy workflow.
 
 ### Run it locally
 
+This is the route that works without any Azure credentials in the repository.
+`az` uses your own sign-in:
+
 ```powershell
 az deployment group create `
-  --resource-group notification-cli `
+  --resource-group notification-cli-rg `
   --template-file infra\main.bicep `
-  --parameters `
-    entraTenantId="<tenant>" `
-    entraClientId="<client>" `
-    sessionSecret="<32 random bytes, base64>"
+  --parameters namePrefix=notification-cli
 ```
 
-Because the settings resource replaces the entire collection, a setting added
-by hand in the portal disappears on the next deployment. Add new settings to
-the template instead.
+Preview first with `az deployment group what-if` and the same arguments. A
+healthy preview of an existing deployment reports `NoChange` for the storage
+account, the plan and every table: anything else means the names no longer
+resolve to the deployed resources, and applying it would build a parallel,
+empty stack.
+
+Add `siteExists=false` on a first deployment, and pass any of
+`entraTenantId`, `entraClientId`, `entraClientSecret`, `sessionSecret`,
+`vapidPublicKey`, `vapidPrivateKey`, `vapidSubject` or `clarityProjectId` to
+set them. Omit a parameter to keep whatever the site already has.
 
 ## Configure Azure
 

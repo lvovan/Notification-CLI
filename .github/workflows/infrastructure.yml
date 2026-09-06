@@ -12,18 +12,14 @@ on:
           - what-if
           - deploy
         default: what-if
-      resource_group:
-        description: "Resource group. Created automatically in deploy mode."
-        type: string
-        default: notification-cli
       location:
-        description: "Azure region for the resources."
+        description: "Azure region. Only used when creating resources; existing ones keep their region."
         type: string
         default: francecentral
-      name_prefix:
-        description: "Prefix for the generated resource names"
-        type: string
-        default: notification-cli
+      first_deployment:
+        description: "Tick only when the App Service site does not exist yet."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -37,12 +33,54 @@ concurrency:
 jobs:
   provision:
     runs-on: ubuntu-latest
+    env:
+      # Every resource name derives from the App Service name, which the deploy
+      # workflow already relies on. One variable, one source of truth: a second
+      # name input could drift from it and provision a parallel, empty copy of
+      # the whole stack.
+      APP_SERVICE_NAME: ${{ vars.AZURE_APP_SERVICE_NAME }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Validate template
         run: az bicep build --file infra/main.bicep --stdout > /dev/null
+
+      # Checked before signing in so the run fails on the real cause rather
+      # than on a confusing authentication error further down.
+      - name: Check configuration
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          missing=""
+          [ -n "$AZURE_CLIENT_ID" ] || missing="$missing AZURE_CLIENT_ID"
+          [ -n "$AZURE_TENANT_ID" ] || missing="$missing AZURE_TENANT_ID"
+          [ -n "$AZURE_SUBSCRIPTION_ID" ] || missing="$missing AZURE_SUBSCRIPTION_ID"
+          if [ -n "$missing" ]; then
+            echo "Missing repository secrets:$missing" >&2
+            echo "These identify a federated Entra application allowed to deploy into the subscription." >&2
+            echo "Without them, run the deployment locally instead. See README, Provision Azure resources." >&2
+            exit 1
+          fi
+
+          if [ -z "$APP_SERVICE_NAME" ]; then
+            echo "The AZURE_APP_SERVICE_NAME repository variable is not set." >&2
+            exit 1
+          fi
+          case "$APP_SERVICE_NAME" in
+            *-wa) ;;
+            *)
+              echo "AZURE_APP_SERVICE_NAME is '$APP_SERVICE_NAME' but must end in '-wa'," >&2
+              echo "because every other resource name is derived from the part before it." >&2
+              exit 1
+              ;;
+          esac
+
+          prefix="${APP_SERVICE_NAME%-wa}"
+          echo "NAME_PREFIX=$prefix" >> "$GITHUB_ENV"
+          echo "RESOURCE_GROUP=$prefix-rg" >> "$GITHUB_ENV"
 
       - name: Sign in to Azure
         uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
@@ -57,83 +95,142 @@ jobs:
         if: inputs.mode == 'deploy'
         run: |
           az group create \
-            --name "${{ inputs.resource_group }}" \
+            --name "$RESOURCE_GROUP" \
             --location "${{ inputs.location }}" \
             --output none
 
-      - name: Preview changes
-        if: inputs.mode == 'what-if'
+      # Application settings are not stored as CI secrets. The template reads
+      # whatever the running site already has and keeps it, so a re-run needs
+      # no credentials at all. Only genuinely absent values are generated here,
+      # which is what makes a first deployment self-contained without making
+      # every later run a chance to overwrite a working configuration.
+      - name: Build deployment parameters
         env:
-          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
-          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
-          VAPID_SUBJECT: ${{ vars.VAPID_SUBJECT }}
           RETENTION_DAYS: ${{ vars.NOTIFICATION_CLI_RETENTION_DAYS || '7' }}
+          CLARITY_PROJECT_ID: ${{ vars.CLARITY_PROJECT_ID }}
           ENTRA_TENANT_ID: ${{ vars.ENTRA_TENANT_ID }}
           ENTRA_CLIENT_ID: ${{ vars.ENTRA_CLIENT_ID }}
-          ENTRA_CLIENT_SECRET: ${{ secrets.ENTRA_CLIENT_SECRET }}
-          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          VAPID_SUBJECT: ${{ vars.VAPID_SUBJECT }}
+          SITE_EXISTS: ${{ inputs.first_deployment && 'false' || 'true' }}
+        run: |
+          set -euo pipefail
+
+          deployed='{}'
+          if [ "$SITE_EXISTS" = "true" ]; then
+            if ! raw=$(az webapp config appsettings list \
+                  --name "$APP_SERVICE_NAME" \
+                  --resource-group "$RESOURCE_GROUP" \
+                  --output json 2>/dev/null); then
+              echo "Site '$APP_SERVICE_NAME' was not found in '$RESOURCE_GROUP'." >&2
+              echo "Tick 'first_deployment' if this stack has never been provisioned." >&2
+              exit 1
+            fi
+            deployed=$(echo "$raw" | jq -c 'map({(.name): .value}) | add // {}')
+          fi
+
+          # Only the names are inspected; no value is ever printed or exported.
+          has() { [ "$(echo "$deployed" | jq -r --arg k "$1" 'has($k)')" = "true" ]; }
+
+          params=$(jq -n \
+            --arg prefix "$NAME_PREFIX" \
+            --arg location "${{ inputs.location }}" \
+            --argjson siteExists "$SITE_EXISTS" \
+            --argjson retentionDays "$RETENTION_DAYS" \
+            '{namePrefix: {value: $prefix},
+              location: {value: $location},
+              siteExists: {value: $siteExists},
+              retentionDays: {value: $retentionDays}}')
+
+          add() {
+            # The value goes through the environment rather than an argument,
+            # for the same reason the CLI is given a file: arguments are
+            # readable by every other process on the runner.
+            params=$(VALUE="$2" jq --arg k "$1" '.[$k] = {value: env.VALUE}' <<<"$params")
+          }
+
+          # Passed through on every run so a changed variable takes effect;
+          # skipped when unset so it cannot blank what is deployed. Written as
+          # full conditionals because `[ -n "$x" ] && add ...` would abort the
+          # step under `set -e` whenever the variable is empty.
+          if [ -n "$CLARITY_PROJECT_ID" ]; then add clarityProjectId "$CLARITY_PROJECT_ID"; fi
+          if [ -n "$ENTRA_TENANT_ID" ]; then add entraTenantId "$ENTRA_TENANT_ID"; fi
+          if [ -n "$ENTRA_CLIENT_ID" ]; then add entraClientId "$ENTRA_CLIENT_ID"; fi
+
+          if ! has NOTIFICATION_CLI_SESSION_SECRET; then
+            echo "Generating a session signing key."
+            add sessionSecret "$(openssl rand -base64 32)"
+          fi
+
+          if ! has NOTIFICATION_CLI_VAPID_PRIVATE_KEY; then
+            if [ -z "$VAPID_SUBJECT" ]; then
+              # A subject is a real contact address that push services use to
+              # reach the sender, so it cannot be invented here.
+              echo "::warning::Web Push is not configured and the VAPID_SUBJECT variable is unset." \
+                   "Set it to mailto:you@example.com and re-run to generate a key pair;" \
+                   "until then notifications only reach open browser tabs."
+            else
+              echo "Generating a VAPID key pair."
+              keys=$(npx --yes web-push@3.6.7 generate-vapid-keys --json)
+              add vapidPublicKey "$(jq -r .publicKey <<<"$keys")"
+              add vapidPrivateKey "$(jq -r .privateKey <<<"$keys")"
+              add vapidSubject "$VAPID_SUBJECT"
+            fi
+          fi
+
+          # Piped rather than passed as an argument, so no generated secret
+          # reaches the process table on its way into the file.
+          file="$RUNNER_TEMP/parameters.json"
+          install -m 600 /dev/null "$file"
+          jq '{"$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+               contentVersion: "1.0.0.0",
+               parameters: .}' <<<"$params" > "$file"
+          echo "PARAMETERS_FILE=$file" >> "$GITHUB_ENV"
+
+          echo "Parameters supplied: $(jq -r 'keys | join(", ")' <<<"$params")"
+
+      - name: Preview changes
+        if: inputs.mode == 'what-if'
         run: |
           az deployment group what-if \
-            --resource-group "${{ inputs.resource_group }}" \
+            --resource-group "$RESOURCE_GROUP" \
             --template-file infra/main.bicep \
-            --parameters \
-              namePrefix="${{ inputs.name_prefix }}" \
-              location="${{ inputs.location }}" \
-              vapidPublicKey="$VAPID_PUBLIC_KEY" \
-              vapidPrivateKey="$VAPID_PRIVATE_KEY" \
-              vapidSubject="$VAPID_SUBJECT" \
-              retentionDays="$RETENTION_DAYS" \
-              entraTenantId="$ENTRA_TENANT_ID" \
-              entraClientId="$ENTRA_CLIENT_ID" \
-              entraClientSecret="$ENTRA_CLIENT_SECRET" \
-              sessionSecret="$SESSION_SECRET"
+            --parameters "@$PARAMETERS_FILE"
 
       - name: Deploy infrastructure
         id: deploy
         if: inputs.mode == 'deploy'
-        env:
-          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
-          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
-          VAPID_SUBJECT: ${{ vars.VAPID_SUBJECT }}
-          RETENTION_DAYS: ${{ vars.NOTIFICATION_CLI_RETENTION_DAYS || '7' }}
-          ENTRA_TENANT_ID: ${{ vars.ENTRA_TENANT_ID }}
-          ENTRA_CLIENT_ID: ${{ vars.ENTRA_CLIENT_ID }}
-          ENTRA_CLIENT_SECRET: ${{ secrets.ENTRA_CLIENT_SECRET }}
-          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
         run: |
           outputs=$(az deployment group create \
             --name "notification-cli-${{ github.run_id }}" \
-            --resource-group "${{ inputs.resource_group }}" \
+            --resource-group "$RESOURCE_GROUP" \
             --template-file infra/main.bicep \
-            --parameters \
-              namePrefix="${{ inputs.name_prefix }}" \
-              location="${{ inputs.location }}" \
-              vapidPublicKey="$VAPID_PUBLIC_KEY" \
-              vapidPrivateKey="$VAPID_PRIVATE_KEY" \
-              vapidSubject="$VAPID_SUBJECT" \
-              retentionDays="$RETENTION_DAYS" \
-              entraTenantId="$ENTRA_TENANT_ID" \
-              entraClientId="$ENTRA_CLIENT_ID" \
-              entraClientSecret="$ENTRA_CLIENT_SECRET" \
-              sessionSecret="$SESSION_SECRET" \
+            --parameters "@$PARAMETERS_FILE" \
             --query properties.outputs \
             --output json)
           echo "push_configured=$(echo "$outputs" | jq -r .pushConfigured.value)" >> "$GITHUB_OUTPUT"
+          echo "telemetry_configured=$(echo "$outputs" | jq -r .telemetryConfigured.value)" >> "$GITHUB_OUTPUT"
           echo "app_name=$(echo "$outputs" | jq -r .appServiceName.value)" >> "$GITHUB_OUTPUT"
           echo "app_hostname=$(echo "$outputs" | jq -r .appServiceHostname.value)" >> "$GITHUB_OUTPUT"
+          echo "principal_id=$(echo "$outputs" | jq -r .appServicePrincipalId.value)" >> "$GITHUB_OUTPUT"
 
       - name: Summarize deployment
         if: inputs.mode == 'deploy'
         env:
           PUSH_CONFIGURED: ${{ steps.deploy.outputs.push_configured }}
+          TELEMETRY_CONFIGURED: ${{ steps.deploy.outputs.telemetry_configured }}
           APP_NAME: ${{ steps.deploy.outputs.app_name }}
           APP_HOSTNAME: ${{ steps.deploy.outputs.app_hostname }}
+          PRINCIPAL_ID: ${{ steps.deploy.outputs.principal_id }}
         run: |
           {
             echo "## Infrastructure deployed"
             echo ""
-            echo "- Web Push configured: \`$PUSH_CONFIGURED\`"
             echo "- App Service: \`$APP_NAME\` (https://$APP_HOSTNAME)"
+            echo "- Web Push configured: \`$PUSH_CONFIGURED\`"
+            echo "- Analytics configured: \`$TELEMETRY_CONFIGURED\`"
+            echo "- Managed identity object ID: \`$PRINCIPAL_ID\`"
             echo ""
             echo "Set the AZURE_APP_SERVICE_NAME variable to \`$APP_NAME\` and store its publish profile as AZURE_APP_SERVICE_PUBLISH_PROFILE."
+            echo ""
+            echo "On a first deployment, add \`https://$APP_HOSTNAME/auth/callback\` as a redirect URI on the Entra application, and register the managed identity above as a federated credential if the tenant forbids client secrets."
           } >> "$GITHUB_STEP_SUMMARY"
