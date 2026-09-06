@@ -24,6 +24,27 @@ const templatePath = repoPath("infra", "main.bicep");
 const settingsModulePath = repoPath("infra", "app-settings.bicep");
 const workflowPath = repoPath(".github", "workflows", "infrastructure.yml");
 const deployWorkflowPath = repoPath(".github", "workflows", "deploy.yml");
+const azdParametersPath = repoPath("infra", "main.parameters.json");
+
+test("azd can set every parameter the template accepts", async () => {
+  const template = await readFile(templatePath, "utf8");
+  const parameters = JSON.parse(await readFile(azdParametersPath, "utf8"));
+
+  // A parameter missing here is silently stuck at its Bicep default for every
+  // azd user, with nothing to hint that setting it had no effect.
+  const declared = [...template.matchAll(/^param (\w+) /gm)].map((match) => match[1] ?? "");
+  // Derived from namePrefix, so exposing it would only invite a mismatch.
+  const derived = new Set(["storageAccountName"]);
+  for (const name of declared) {
+    if (derived.has(name)) continue;
+    assert.ok(parameters.parameters[name], `${name} is not wired to the azd environment`);
+  }
+
+  // azd defaults a fresh environment to a first deployment; the template hands
+  // back NOTIFICATION_CLI_SITE_EXISTS so every later run reads deployed settings.
+  assert.equal(parameters.parameters.siteExists.value, "${NOTIFICATION_CLI_SITE_EXISTS=false}");
+  assert.match(template, /output NOTIFICATION_CLI_SITE_EXISTS bool = true/);
+});
 
 test("the template supplies every setting the API reads", async () => {
   const template = await readFile(templatePath, "utf8");

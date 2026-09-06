@@ -611,7 +611,34 @@ and the managed identity object ID. Download the site's publish profile and
 store it as the `AZURE_APP_SERVICE_PUBLISH_PROFILE` repository secret for the
 deploy workflow.
 
-### Run it locally
+### Run it with azd
+
+`azure.yaml` and `infra/main.parameters.json` make the template a first-class
+`azd` project, so provisioning is:
+
+```powershell
+azd env new prod --subscription <subscription-id> --location westeurope
+azd env set AZURE_RESOURCE_GROUP notify-rg
+azd env set NOTIFICATION_CLI_NAME_PREFIX notification-lvovan
+azd provision
+```
+
+`AZURE_RESOURCE_GROUP` is required because the template is scoped to a resource
+group rather than a subscription. Every other parameter is optional and reads
+from the azd environment, so `azd env set NOTIFICATION_CLI_CLARITY_PROJECT_ID
+<id>` configures a value and leaving it unset keeps whatever the site already
+has.
+
+`siteExists` looks after itself: it defaults to `false`, and the template
+returns `NOTIFICATION_CLI_SITE_EXISTS=true` as an output, which azd writes back
+into the environment. A fresh environment therefore provisions as a first
+deployment and every run after it reads the deployed settings.
+
+Only provisioning is configured. `azure.yaml` declares no services, because the
+application package is built and shipped by the deploy workflow, so `azd deploy`
+has nothing to do.
+
+### Run it with the Azure CLI
 
 This is the route that works without any Azure credentials in the repository.
 `az` uses your own sign-in:

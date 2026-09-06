@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "namePrefix": {
+      "value": "${NOTIFICATION_CLI_NAME_PREFIX=notification-lvovan}"
+    },
+    "location": {
+      "value": "${AZURE_LOCATION}"
+    },
+    "siteExists": {
+      "value": "${NOTIFICATION_CLI_SITE_EXISTS=false}"
+    },
+    "retentionDays": {
+      "value": "${NOTIFICATION_CLI_RETENTION_DAYS=7}"
+    },
+    "entraTenantId": {
+      "value": "${NOTIFICATION_CLI_ENTRA_TENANT_ID=}"
+    },
+    "entraClientId": {
+      "value": "${NOTIFICATION_CLI_ENTRA_CLIENT_ID=}"
+    },
+    "entraClientSecret": {
+      "value": "${NOTIFICATION_CLI_ENTRA_CLIENT_SECRET=}"
+    },
+    "sessionSecret": {
+      "value": "${NOTIFICATION_CLI_SESSION_SECRET=}"
+    },
+    "vapidPublicKey": {
+      "value": "${NOTIFICATION_CLI_VAPID_PUBLIC_KEY=}"
+    },
+    "vapidPrivateKey": {
+      "value": "${NOTIFICATION_CLI_VAPID_PRIVATE_KEY=}"
+    },
+    "vapidSubject": {
+      "value": "${NOTIFICATION_CLI_VAPID_SUBJECT=}"
+    },
+    "clarityProjectId": {
+      "value": "${NOTIFICATION_CLI_CLARITY_PROJECT_ID=}"
+    }
+  }
+}

@@ -362,6 +362,15 @@ module appServiceSettings 'app-settings.bicep' = {
   }
 }
 
+/*
+  Read back by `azd provision` as an environment variable, so the next run
+  knows the site exists and reads its settings rather than assuming a first
+  deployment. infra/main.parameters.json defaults it to false, which is only
+  ever true of a brand-new azd environment.
+*/
+@description('Records that the site now exists. Consumed by the siteExists parameter on subsequent azd runs.')
+output NOTIFICATION_CLI_SITE_EXISTS bool = true
+
 @description('Name of the Web PubSub instance backing real-time delivery.')
 output webPubSubName string = webPubSub.name
 

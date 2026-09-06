@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+# Provisioning only. The application package is built and shipped by
+# .github/workflows/deploy.yml, so no services are declared here and
+# `azd deploy` has nothing to do.
+name: notification-cli
+metadata:
+  template: notification-cli
+
+infra:
+  provider: bicep
+  path: infra
+  module: main

@@ -7,3 +7,6 @@ dist/
 *.exe
 .DS_Store
 Thumbs.db
+
+# azd environments hold subscription IDs and any secret parameter values.
+.azure/
