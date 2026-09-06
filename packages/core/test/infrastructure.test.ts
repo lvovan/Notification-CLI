@@ -253,6 +253,31 @@ test("nothing the template writes carries a key", async () => {
   );
 });
 
+test("a deployment reports the endpoints it wrote and any retired settings left behind", async () => {
+  const template = await readFile(templatePath, "utf8");
+
+  // A missing endpoint setting was reported once and could not be checked after
+  // the fact, because nothing in the deployment record echoed what was written.
+  assert.match(template, new RegExp(`output webPubSubEndpoint string = effectiveSettings\\.${ENDPOINT_ENV}`));
+  assert.match(
+    template,
+    new RegExp(`output storageTableEndpoint string = effectiveSettings\\.${STORAGE_TABLE_ENDPOINT_ENV}`),
+  );
+
+  // The merge preserves deployed settings, so a retired key can only be
+  // reported, never removed. Both retired names must stay listed.
+  const staleBlock = template.match(/output staleSettings array = filter\(\s*\[([^\]]*)\]/)?.[1];
+  assert.ok(staleBlock, "staleSettings output is missing");
+  for (const retired of [
+    "NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING",
+    "NOTIFICATION_CLI_STORAGE_CONNECTION_STRING",
+  ]) {
+    assert.ok(staleBlock.includes(retired), `${retired} is not reported as stale`);
+    // Reporting a retired name must never turn into writing it again.
+    assert.ok(!template.includes(`${retired}:`), `${retired} is still written by the template`);
+  }
+});
+
 test("the site identity is granted the data-plane roles it needs", async () => {
   const template = await readFile(templatePath, "utf8");
 

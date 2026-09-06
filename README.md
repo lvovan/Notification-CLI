@@ -644,6 +644,20 @@ Drop `siteExists=false` once the site exists, and pass any of
 `vapidPublicKey`, `vapidPrivateKey`, `vapidSubject` or `clarityProjectId` to
 set them. Omit a parameter to keep whatever the site already has.
 
+The deployment outputs report what was actually written, which is the quickest
+way to confirm a setting landed:
+
+```powershell
+az deployment group show --resource-group notify-rg --name <deployment-name> `
+  --query properties.outputs.{webPubSub:webPubSubEndpoint.value,table:storageTableEndpoint.value,stale:staleSettings.value}
+```
+
+`staleSettings` lists retired settings the site still holds. The template merges
+over the deployed configuration and so can never delete a key: anything listed
+there — the former `NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING` and
+`NOTIFICATION_CLI_STORAGE_CONNECTION_STRING`, which carried account keys — must
+be removed by hand from the **Environment variables** blade.
+
 ## Configure Azure
 
 The Bicep template above sets every value in this table on the App Service. Use

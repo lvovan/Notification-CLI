@@ -368,6 +368,26 @@ output webPubSubName string = webPubSub.name
 @description('Name of the storage account holding subscriptions, metrics and notification history.')
 output storageAccountName string = storageAccount.name
 
+@description('Web PubSub endpoint written to the site. Echoed so a deployment reports what it configured.')
+output webPubSubEndpoint string = effectiveSettings.NOTIFICATION_CLI_AZURE_WEB_PUBSUB_ENDPOINT
+
+@description('Table endpoint written to the site. Echoed so a deployment reports what it configured.')
+output storageTableEndpoint string = effectiveSettings.NOTIFICATION_CLI_STORAGE_TABLE_ENDPOINT
+
+/*
+  Settings this template no longer writes but cannot remove: the merge preserves
+  whatever the site already holds, so a retired key survives every redeployment
+  until it is deleted by hand. Surfacing it here is the only warning available.
+*/
+@description('Retired settings still present on the site. Delete these by hand; the template cannot remove them.')
+output staleSettings array = filter(
+  [
+    'NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING'
+    'NOTIFICATION_CLI_STORAGE_CONNECTION_STRING'
+  ],
+  key => contains(deployedSettings, key)
+)
+
 @description('Whether Web Push is configured. When false, notifications only reach open browser tabs.')
 output pushConfigured bool = !startsWith(effectiveSettings.NOTIFICATION_CLI_VAPID_PUBLIC_KEY, placeholderPrefix)
 
