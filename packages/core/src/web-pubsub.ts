@@ -1,10 +1,10 @@
 import { WebPubSubServiceClient } from "@azure/web-pubsub";
+import { azureCredential } from "./azure-credential.js";
 import { requireSetting } from "./configuration.js";
 import { userGroup } from "./identity.js";
 
 export const HUB_NAME = "notifications";
-export const CONNECTION_STRING_ENV =
-  "NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING";
+export const ENDPOINT_ENV = "NOTIFICATION_CLI_AZURE_WEB_PUBSUB_ENDPOINT";
 /** Minutes a browser's client access token stays valid. */
 export const CLIENT_TOKEN_MINUTES = 60;
 
@@ -25,7 +25,8 @@ export function createWebPubSubClient(
   env: NodeJS.ProcessEnv = process.env,
 ): WebPubSubServiceClient {
   return new WebPubSubServiceClient(
-    requireSetting(env, CONNECTION_STRING_ENV),
+    requireSetting(env, ENDPOINT_ENV),
+    azureCredential(),
     HUB_NAME,
   );
 }

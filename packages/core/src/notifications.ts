@@ -12,7 +12,7 @@ import {
   tryCreateNotificationHistoryStore,
   type NotificationHistoryStore,
 } from "./notification-storage.js";
-import { STORAGE_CONNECTION_STRING_ENV } from "./table-storage.js";
+import { STORAGE_TABLE_ENDPOINT_ENV } from "./table-storage.js";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
@@ -43,7 +43,7 @@ function storageUnavailable(): CoreResponse {
     status: 503,
     headers: NO_STORE,
     jsonBody: {
-      error: `${STORAGE_CONNECTION_STRING_ENV} is not configured.`,
+      error: `${STORAGE_TABLE_ENDPOINT_ENV} is not configured.`,
     },
   };
 }

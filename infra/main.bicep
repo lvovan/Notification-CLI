@@ -10,9 +10,12 @@
     - Azure App Service (B1): hosts the PWA, API and OAuth authorization
       server.
 
-  The template also writes the App Service environment variables, wiring in the
-  connection strings of the resources above so no secret has to be copied by
-  hand.
+  The template also writes the App Service environment variables. No key or
+  connection string is among them: the site is given the endpoints of the
+  resources above and reaches both with its system-assigned managed identity,
+  under the role assignments declared here. Shared key access on the storage
+  account and local auth on Web PubSub are switched off accordingly, so the
+  keys those services still hold cannot be used at all.
 
   Application code is NOT deployed here. Run the deploy workflow afterwards; it
   uploads the built server package to App Service.
@@ -119,9 +122,10 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2025-08-01' = {
   }
   kind: 'StorageV2'
   properties: {
-    // The API reaches Table Storage with the account key embedded in its
-    // connection string, so shared key access stays enabled.
-    allowSharedKeyAccess: true
+    // No key ever leaves this account: the site reaches Table Storage with its
+    // managed identity, so shared key access is switched off entirely. That
+    // also disables the portal's key-based table browser.
+    allowSharedKeyAccess: false
     allowBlobPublicAccess: false
     supportsHttpsTrafficOnly: true
     minimumTlsVersion: 'TLS1_2'
@@ -151,7 +155,12 @@ resource webPubSub 'Microsoft.SignalRService/webPubSub@2024-03-01' = {
   properties: {
     // Browsers never see this resource directly: /api/negotiate mints a
     // short-lived client access URL for the "notifications" hub instead.
-    disableLocalAuth: false
+    //
+    // Local auth is disabled, so the access keys this resource still has
+    // cannot be used to reach it. The site authenticates with its managed
+    // identity, and the client access tokens it mints for browsers are issued
+    // by the service rather than signed with a key.
+    disableLocalAuth: true
     publicNetworkAccess: 'Enabled'
     /*
       networkACLs is deliberately not set. The Free tier rejects it outright
@@ -175,10 +184,11 @@ var deployedSettings = siteExists
   : {}
 
 // Owned by the template: derived from the resources above, so these always win
-// over whatever the site currently holds.
+// over whatever the site currently holds. Both are plain endpoints; the site
+// authenticates with its managed identity, so no key is stored here.
 var derivedSettings = {
-  NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING: webPubSub.listKeys().primaryConnectionString
-  NOTIFICATION_CLI_STORAGE_CONNECTION_STRING: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};AccountKey=${storageAccount.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
+  NOTIFICATION_CLI_AZURE_WEB_PUBSUB_ENDPOINT: 'https://${webPubSub.properties.hostName}'
+  NOTIFICATION_CLI_STORAGE_TABLE_ENDPOINT: storageAccount.properties.primaryEndpoints.table
   NOTIFICATION_CLI_RETENTION_DAYS: string(retentionDays)
   // The package ships already bundled, so Oryx has nothing to build. The entry
   // point comes from the generated package.json, which is why no startup
@@ -267,7 +277,8 @@ resource appService 'Microsoft.Web/sites@2024-11-01' = {
   location: location
   kind: 'app,linux'
   // The identity is what lets the site authenticate to Entra ID without a
-  // client secret, which some tenants forbid by policy.
+  // client secret, which some tenants forbid by policy. It is also how the
+  // site reaches Storage and Web PubSub, neither of which is given a key.
   identity: {
     type: 'SystemAssigned'
   }
@@ -281,6 +292,52 @@ resource appService 'Microsoft.Web/sites@2024-11-01' = {
       http20Enabled: true
       minTlsVersion: '1.2'
     }
+  }
+}
+
+/*
+  What the site's identity is allowed to do.
+
+  These grants are the whole reason no key appears in any application setting,
+  so a deployment that silently skipped them would leave the site unable to
+  read a single table. Assignment names must be deterministic GUIDs, because a
+  fresh name on each run would be a second, duplicate assignment.
+
+  Creating a role assignment needs Owner or User Access Administrator on the
+  scope. A Contributor can deploy everything else here and will fail only on
+  this pair.
+*/
+
+// Read and write table entities, but not manage the account or its keys.
+var storageTableDataContributorRoleId = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
+// Send to groups and mint client access tokens for the hub.
+var webPubSubServiceOwnerRoleId = '12cf5a90-567b-43ae-8102-96cf46c7d9b4'
+
+resource storageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: storageAccount
+  name: guid(storageAccount.id, appService.id, storageTableDataContributorRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      storageTableDataContributorRoleId
+    )
+    principalId: appService.identity.principalId
+    // Without this the assignment can fail on a first deployment, because the
+    // identity may not have replicated across Entra ID yet.
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource webPubSubRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: webPubSub
+  name: guid(webPubSub.id, appService.id, webPubSubServiceOwnerRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      webPubSubServiceOwnerRoleId
+    )
+    principalId: appService.identity.principalId
+    principalType: 'ServicePrincipal'
   }
 }
 

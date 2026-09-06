@@ -17,8 +17,8 @@ import {
 } from "@notification-cli/core/notification-storage";
 import { OAUTH_TABLE } from "@notification-cli/core/oauth-storage";
 import { PUSH_SUBSCRIPTIONS_TABLE } from "@notification-cli/core/push-storage";
-import { STORAGE_CONNECTION_STRING_ENV } from "@notification-cli/core/table-storage";
-import { CONNECTION_STRING_ENV } from "@notification-cli/core/web-pubsub";
+import { STORAGE_TABLE_ENDPOINT_ENV } from "@notification-cli/core/table-storage";
+import { ENDPOINT_ENV } from "@notification-cli/core/web-pubsub";
 
 const templatePath = repoPath("infra", "main.bicep");
 const settingsModulePath = repoPath("infra", "app-settings.bicep");
@@ -33,8 +33,8 @@ test("the template supplies every setting the API reads", async () => {
   // as an object key, either derived by the template or supplied as an
   // optional parameter.
   for (const setting of [
-    CONNECTION_STRING_ENV,
-    STORAGE_CONNECTION_STRING_ENV,
+    ENDPOINT_ENV,
+    STORAGE_TABLE_ENDPOINT_ENV,
     RETENTION_DAYS_ENV,
     VAPID_PUBLIC_KEY_ENV,
     VAPID_PRIVATE_KEY_ENV,
@@ -223,6 +223,58 @@ test("provisioning regenerates keys that are still placeholders", async () => {
     "infrastructure.yml treats a placeholder as a configured setting",
   );
   assert.match(workflow, new RegExp(`startswith\\("${PLACEHOLDER_PREFIX}"\\) \\| not`));
+});
+
+test("nothing the template writes carries a key", async () => {
+  const template = await readFile(templatePath, "utf8");
+
+  // The site reaches Storage and Web PubSub with its managed identity. A
+  // listKeys() call reappearing here would put an account key back into an
+  // application setting, and would keep working, so only this guard catches
+  // the regression.
+  assert.ok(
+    !template.includes("listKeys()"),
+    "infra/main.bicep reads a resource key back into a setting",
+  );
+  assert.ok(!template.includes("AccountKey="));
+  assert.match(template, /allowSharedKeyAccess: false/);
+  assert.match(template, /disableLocalAuth: true/);
+
+  // Endpoints, not connection strings.
+  assert.match(
+    template,
+    new RegExp(`${ENDPOINT_ENV}: 'https://\\$\\{webPubSub\\.properties\\.hostName\\}'`),
+  );
+  assert.match(
+    template,
+    new RegExp(
+      `${STORAGE_TABLE_ENDPOINT_ENV}: storageAccount\\.properties\\.primaryEndpoints\\.table`,
+    ),
+  );
+});
+
+test("the site identity is granted the data-plane roles it needs", async () => {
+  const template = await readFile(templatePath, "utf8");
+
+  // Without these the site starts, reports healthy and then fails every
+  // request, because the endpoints it was given are unreachable to an identity
+  // holding no role.
+  assert.match(template, /scope: storageAccount\s+name: guid\(/);
+  assert.match(template, /scope: webPubSub\s+name: guid\(/);
+  // Storage Table Data Contributor and Web PubSub Service Owner.
+  assert.ok(template.includes("0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3"));
+  assert.ok(template.includes("12cf5a90-567b-43ae-8102-96cf46c7d9b4"));
+
+  // A name that changed between runs would create a duplicate assignment
+  // rather than updating the existing one.
+  assert.ok(!/name: newGuid\(/.test(template));
+
+  // A first deployment can race Entra ID replication of the new identity
+  // unless the principal type is stated.
+  assert.equal(
+    (template.match(/principalType: 'ServicePrincipal'/g) ?? []).length,
+    2,
+  );
 });
 
 test("resource names match the deployed stack", async () => {

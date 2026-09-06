@@ -9,7 +9,7 @@ import { notificationOwner, type NotificationOwner } from "./identity.js";
 import { verifyJwt } from "./oauth-jwt.js";
 import { MCP_SCOPE, resourceIdentifier } from "./oauth-server.js";
 import { tryCreateOAuthStore, type OAuthStore } from "./oauth-storage.js";
-import { STORAGE_CONNECTION_STRING_ENV } from "./table-storage.js";
+import { STORAGE_TABLE_ENDPOINT_ENV } from "./table-storage.js";
 
 export type ApiKeyResolution =
   | { authorized: true; owner: NotificationOwner }
@@ -85,8 +85,8 @@ async function resolveKey(
   const keys = store === undefined ? tryCreateApiKeyStore(env) : store;
   if (!keys) {
     throw new ConfigurationError(
-      STORAGE_CONNECTION_STRING_ENV,
-      `${STORAGE_CONNECTION_STRING_ENV} is not configured.`,
+      STORAGE_TABLE_ENDPOINT_ENV,
+      `${STORAGE_TABLE_ENDPOINT_ENV} is not configured.`,
     );
   }
   return keys.resolve(presented);

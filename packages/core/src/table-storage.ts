@@ -1,8 +1,9 @@
 import { TableClient } from "@azure/data-tables";
+import { azureCredential } from "./azure-credential.js";
 import { hasSetting, requireSetting } from "./configuration.js";
 
-export const STORAGE_CONNECTION_STRING_ENV =
-  "NOTIFICATION_CLI_STORAGE_CONNECTION_STRING";
+export const STORAGE_TABLE_ENDPOINT_ENV =
+  "NOTIFICATION_CLI_STORAGE_TABLE_ENDPOINT";
 export const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function tableStatusCode(error: unknown): number | undefined {
@@ -43,9 +44,10 @@ export function createTableClient(
   env: NodeJS.ProcessEnv,
   table: string,
 ): TableClient {
-  return TableClient.fromConnectionString(
-    requireSetting(env, STORAGE_CONNECTION_STRING_ENV),
+  return new TableClient(
+    requireSetting(env, STORAGE_TABLE_ENDPOINT_ENV),
     table,
+    azureCredential(),
   );
 }
 
@@ -54,7 +56,7 @@ export function tryCreateTableClient(
   env: NodeJS.ProcessEnv,
   table: string,
 ): TableClient | null {
-  return hasSetting(env, STORAGE_CONNECTION_STRING_ENV)
+  return hasSetting(env, STORAGE_TABLE_ENDPOINT_ENV)
     ? createTableClient(env, table)
     : null;
 }

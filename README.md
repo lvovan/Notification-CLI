@@ -321,18 +321,21 @@ has none of it, and shows two symptoms in turn:
 
   ```powershell
   az webapp config appsettings set --name <site> --resource-group <group> --settings `
-    NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING="<connection string>" `
-    NOTIFICATION_CLI_STORAGE_CONNECTION_STRING="<connection string>" `
+    NOTIFICATION_CLI_AZURE_WEB_PUBSUB_ENDPOINT="https://<instance>.webpubsub.azure.com" `
+    NOTIFICATION_CLI_STORAGE_TABLE_ENDPOINT="https://<account>.table.core.windows.net/" `
     NOTIFICATION_CLI_ENTRA_TENANT_ID="<tenant>" `
     NOTIFICATION_CLI_ENTRA_CLIENT_ID="<client>" `
     NOTIFICATION_CLI_ENTRA_CLIENT_SECRET="<secret, or omit entirely>" `
     NOTIFICATION_CLI_SESSION_SECRET="<32 random bytes, base64>"
   ```
 
-  Point the connection strings at the Web PubSub instance and storage account
-  backing this deployment. The app creates missing tables on demand, but the
-  Bicep template creates them up front so a fresh deployment is immediately
-  consistent.
+  Both are plain endpoints, not connection strings: the site authenticates with
+  its managed identity, so setting them by hand is not enough on its own — the
+  identity also needs the role assignments described in
+  [Provision Azure resources](#provision-azure-resources). A `403` from
+  Storage or Web PubSub means the endpoints are right and the roles are
+  missing. The app creates missing tables on demand, but the Bicep template
+  creates them up front so a fresh deployment is immediately consistent.
 
 Do **not** enable App Service Easy Auth. It rejects any `Authorization` bearer
 it cannot validate with a `401`, even on excluded paths, which would break MCP
@@ -484,9 +487,21 @@ node dist\main.js
 
 `infra\main.bicep` declares the whole solution: a Web PubSub instance
 (`Free_F1`), a `Standard_LRS` storage account with the five tables, and the B1
-Linux App Service host. It also writes the App Service application settings,
-deriving the Web PubSub and storage connection strings from the resources it
-just created, so neither is ever copied by hand.
+Linux App Service host. It also writes the App Service application settings.
+
+No key or connection string is among them. The site is given the two service
+endpoints and reaches both with its system-assigned managed identity, which the
+template grants **Storage Table Data Contributor** on the storage account and
+**Web PubSub Service Owner** on the hub. Shared key access on the storage
+account and local auth on Web PubSub are switched off, so the keys those
+services still hold cannot be used at all — including by the portal's key-based
+table browser.
+
+Creating those role assignments needs **Owner** or **User Access
+Administrator** on the resource group. A Contributor can deploy everything else
+and will fail only on that pair. Running locally, the same code signs in as
+whoever is logged in to the Azure CLI, so development needs no secret either;
+grant your own account the same two roles.
 
 The template does not deploy application code. Provision first, then run the
 deploy workflow.
@@ -620,11 +635,11 @@ configure a manually created instance:
 
 | Variable | Purpose |
 | --- | --- |
-| `NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING` | **Required.** Server-side Web PubSub connection used to negotiate browser access and send messages |
+| `NOTIFICATION_CLI_AZURE_WEB_PUBSUB_ENDPOINT` | **Required.** `https://<instance>.webpubsub.azure.com`. Reached with the site's managed identity to negotiate browser access and send messages |
 | `NOTIFICATION_CLI_VAPID_PUBLIC_KEY` | Push only. URL-safe VAPID public key returned to signed-in browsers |
 | `NOTIFICATION_CLI_VAPID_PRIVATE_KEY` | Push only. Secret VAPID private key used only by the API |
 | `NOTIFICATION_CLI_VAPID_SUBJECT` | Push only. VAPID contact URI, normally `mailto:you@example.com` |
-| `NOTIFICATION_CLI_STORAGE_CONNECTION_STRING` | Azure Storage connection string used for durable push subscriptions, per-user API keys, notification history and metrics |
+| `NOTIFICATION_CLI_STORAGE_TABLE_ENDPOINT` | `https://<account>.table.core.windows.net/`. Reached with the site's managed identity for durable push subscriptions, per-user API keys, notification history and metrics |
 | `NOTIFICATION_CLI_RETENTION_DAYS` | Optional. Whole number of days notifications stay readable in the frontend. Defaults to `7`, maximum `365` |
 | `NOTIFICATION_CLI_ENTRA_TENANT_ID` | Directory of the Entra application used to sign users in |
 | `NOTIFICATION_CLI_ENTRA_CLIENT_ID` | Application ID of that registration |
@@ -647,7 +662,7 @@ Real-time delivery through Web PubSub is the required core transport. The
 notifications are still delivered live to open pages and the response reports
 `"pushConfigured": false` instead of failing. Missing a **required** setting
 makes `/api/notify` answer `503` naming the exact variable, for example
-`{"error":"NOTIFICATION_CLI_STORAGE_CONNECTION_STRING is not configured."}`.
+`{"error":"NOTIFICATION_CLI_STORAGE_TABLE_ENDPOINT is not configured."}`.
 
 Generate a VAPID key pair once and keep it stable. Rotating it requires clients
 to create a new browser subscription:
@@ -658,8 +673,8 @@ pnpm --filter @notification-cli/core exec web-push generate-vapid-keys
 
 The frontend calls `/api/negotiate` to receive a short-lived client URL and
 then opens a secure WebSocket. It receives only the VAPID public key; the
-Web PubSub connection string, VAPID private key, the per-user API keys, and
-Storage connection string remain server-side.
+VAPID private key, the per-user API keys, and the service endpoints the site
+reaches with its managed identity remain server-side.
 
 Visiting the page redirects unauthenticated users to `/.auth/login/aad`. Those
 `/.auth/*` paths are implemented by `apps/server`, not by App Service Easy
@@ -1256,10 +1271,12 @@ settings — are obsolete and should be removed.
 
 ## Security
 
-- Never place the Web PubSub connection string in a `VITE_*` variable. Vite
+- Never place a service endpoint or credential in a `VITE_*` variable. Vite
   variables are embedded in browser assets.
-- Keep the VAPID private key, the Entra client secret, the session secret and
-  the Azure Storage connection string server-side.
+- Storage and Web PubSub are reached with the site's managed identity, and
+  both have key-based access switched off, so there is no account key or
+  connection string anywhere to leak. Keep the VAPID private key, the Entra
+  client secret and the session secret server-side.
 - Prefer OAuth over the API key for MCP clients on the App Service host. An
   access token is scoped to `mcp`, bound to this deployment, expires in an
   hour, and never has to be pasted anywhere.

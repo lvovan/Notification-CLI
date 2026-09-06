@@ -363,7 +363,7 @@ test("notify reports 503 naming the missing setting when misconfigured", async (
     authorizedEnv,
     async () => {
       throw new ConfigurationError(
-        "NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING",
+        "NOTIFICATION_CLI_AZURE_WEB_PUBSUB_ENDPOINT",
       );
     },
     undefined,
@@ -372,6 +372,6 @@ test("notify reports 503 naming the missing setting when misconfigured", async (
   assert.equal(response.status, 503);
   assert.match(
     (response.jsonBody as { error: string }).error,
-    /NOTIFICATION_CLI_AZURE_WEB_PUBSUB_CONNECTION_STRING is not configured/,
+    /NOTIFICATION_CLI_AZURE_WEB_PUBSUB_ENDPOINT is not configured/,
   );
 });

@@ -29,7 +29,7 @@ export async function handleMetricsRequest(
       headers: { "Cache-Control": "no-store" },
       jsonBody: {
         error:
-          "NOTIFICATION_CLI_STORAGE_CONNECTION_STRING is not configured.",
+          "NOTIFICATION_CLI_STORAGE_TABLE_ENDPOINT is not configured.",
       },
     };
   }

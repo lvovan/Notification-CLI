@@ -167,7 +167,7 @@ test("metrics endpoint reports 503 when storage is not configured", async () => 
   assert.equal(response.status, 503);
   assert.match(
     (response.jsonBody as { error: string }).error,
-    /NOTIFICATION_CLI_STORAGE_CONNECTION_STRING is not configured/,
+    /NOTIFICATION_CLI_STORAGE_TABLE_ENDPOINT is not configured/,
   );
 });
 
