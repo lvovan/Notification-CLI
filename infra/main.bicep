@@ -149,32 +149,12 @@ resource webPubSub 'Microsoft.SignalRService/webPubSub@2024-03-01' = {
     disableLocalAuth: false
     publicNetworkAccess: 'Enabled'
     /*
-      Declared explicitly rather than left to the service default. The rules
-      below are the default, but the property is not optional on update: omit
-      it and ARM resets defaultAction to Deny with no allow rules, which
-      silently blocks every client and server connection.
+      networkACLs is deliberately not set. The Free tier rejects it outright
+      ("Free tier doesn't support setting network ACLs"), and it does not need
+      it: the service applies allow-all defaults on creation and leaves them
+      untouched on later deployments. Verified by deploying this resource twice
+      without the property and reading the rules back both times.
     */
-    networkACLs: {
-      defaultAction: 'Deny'
-      ipRules: [
-        {
-          action: 'Allow'
-          value: '0.0.0.0/0'
-        }
-        {
-          action: 'Allow'
-          value: '::/0'
-        }
-      ]
-      publicNetwork: {
-        allow: [
-          'ServerConnection'
-          'ClientConnection'
-          'RESTAPI'
-          'Trace'
-        ]
-      }
-    }
   }
 }
 
@@ -272,16 +252,24 @@ resource appService 'Microsoft.Web/sites@2024-11-01' = {
 }
 
 /*
-  Application settings are written as a child resource rather than inside
-  siteConfig above, because the merged set is only known once the deployment
-  reads the running site. An appSettings array inside siteConfig has to be
-  computable before the deployment starts, which a lookup cannot be; this
-  resource takes the settings as a plain object and has no such restriction.
+  Application settings are written by a module rather than declared here.
+
+  The set to apply is built by merging in the settings the site already has,
+  and ARM rejects a template in which a resource is derived from a `list()` of
+  its own resource ID as a circular dependency. Reading and writing the same
+  resource therefore has to be split across two templates.
+
+  They are also not part of siteConfig above, because an appSettings array
+  there must be computable before the deployment starts, which a lookup of the
+  running site cannot be.
 */
-resource appServiceSettings 'Microsoft.Web/sites/config@2024-11-01' = {
-  parent: appService
+module appServiceSettings 'app-settings.bicep' = {
   name: 'appsettings'
-  properties: effectiveSettings
+  params: {
+    // Referring to the site resource is what orders this after it exists.
+    siteName: appService.name
+    settings: effectiveSettings
+  }
 }
 
 @description('Name of the Web PubSub instance backing real-time delivery.')

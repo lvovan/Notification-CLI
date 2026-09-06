@@ -20,6 +20,10 @@ on:
         description: "Tick only when the App Service site does not exist yet."
         type: boolean
         default: false
+      resource_group:
+        description: "Resource group. Defaults to the site name with -wa replaced by -rg."
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -53,6 +57,7 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RESOURCE_GROUP_INPUT: ${{ inputs.resource_group }}
         run: |
           missing=""
           [ -n "$AZURE_CLIENT_ID" ] || missing="$missing AZURE_CLIENT_ID"
@@ -80,7 +85,12 @@ jobs:
 
           prefix="${APP_SERVICE_NAME%-wa}"
           echo "NAME_PREFIX=$prefix" >> "$GITHUB_ENV"
-          echo "RESOURCE_GROUP=$prefix-rg" >> "$GITHUB_ENV"
+
+          # Resource names must derive from the site name, because a name that
+          # resolves to nothing silently builds a parallel stack. The resource
+          # group is different: it only says where to look, so it is an input
+          # with a derived default rather than a rule.
+          echo "RESOURCE_GROUP=${RESOURCE_GROUP_INPUT:-$prefix-rg}" >> "$GITHUB_ENV"
 
       - name: Sign in to Azure
         uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1

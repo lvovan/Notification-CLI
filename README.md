@@ -501,6 +501,7 @@ the Actions tab and choose:
 | `mode` | `what-if` prints the changes without applying them, `deploy` applies them |
 | `location` | Azure region. Only used when creating resources; existing ones keep theirs |
 | `first_deployment` | Tick only when the App Service site does not exist yet |
+| `resource_group` | Optional. Defaults to the site name with `-wa` replaced by `-rg` |
 
 There is no name input. Every resource name derives from the
 `AZURE_APP_SERVICE_NAME` repository variable, which must end in `-wa`:
@@ -515,6 +516,9 @@ nothing is not an error, it is a brand new resource. A separate input free to
 drift from the deploy workflow's variable would provision a second, empty stack
 whose storage account holds none of the existing API keys, push subscriptions
 or notification history.
+
+The resource group is the exception, and stays an input: it only says where to
+look, so getting it wrong fails rather than duplicating anything.
 
 `what-if` requires the resource group to exist, because a preview must not
 change anything. Run `deploy` first, or create the group by hand.
@@ -591,6 +595,16 @@ healthy preview of an existing deployment reports `NoChange` for the storage
 account, the plan and every table: anything else means the names no longer
 resolve to the deployed resources, and applying it would build a parallel,
 empty stack.
+
+One difference in that preview is expected and harmless: it reports the Web
+PubSub network rules as being removed. The template does not set them because
+the Free tier rejects the property outright, and the service keeps its
+allow-all defaults across deployments regardless. `what-if` compares the
+template against the resource and cannot know that, so it predicts a removal
+that never happens.
+
+`az deployment group validate` is the stricter check, because it runs resource
+provider preflight and so catches what `what-if` cannot.
 
 Add `siteExists=false` on a first deployment, and pass any of
 `entraTenantId`, `entraClientId`, `entraClientSecret`, `sessionSecret`,

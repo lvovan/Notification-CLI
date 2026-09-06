@@ -19,6 +19,7 @@ import { STORAGE_CONNECTION_STRING_ENV } from "@notification-cli/core/table-stor
 import { CONNECTION_STRING_ENV } from "@notification-cli/core/web-pubsub";
 
 const templatePath = repoPath("infra", "main.bicep");
+const settingsModulePath = repoPath("infra", "app-settings.bicep");
 const workflowPath = repoPath(".github", "workflows", "infrastructure.yml");
 const deployWorkflowPath = repoPath(".github", "workflows", "deploy.yml");
 
@@ -92,14 +93,49 @@ test("every resource stays on a free or lowest-cost tier", async () => {
 
 test("the App Service host is always deployed and has the API settings", async () => {
   const template = await readFile(templatePath, "utf8");
+  const settingsModule = await readFile(settingsModulePath, "utf8");
 
   assert.ok(!template.includes("deployAppService"));
   assert.match(template, /serverfarms@[\d-]+' = \{/);
   assert.match(template, /sites@[\d-]+' = \{/);
-  // Settings are written through a child config resource, because the merged
-  // set is only known once the deployment has read the running site.
-  assert.match(template, /sites\/config@[\d-]+' = \{[\s\S]*?name: 'appsettings'/);
-  assert.match(template, /properties: effectiveSettings/);
+  assert.match(template, /module appServiceSettings 'app-settings\.bicep'/);
+  assert.match(settingsModule, /sites\/config@[\d-]+' = \{[\s\S]*?name: 'appsettings'/);
+  assert.match(settingsModule, /properties: settings/);
+});
+
+test("reading and writing the settings stay in separate templates", async () => {
+  const template = await readFile(templatePath, "utf8");
+  const settingsModule = await readFile(settingsModulePath, "utf8");
+
+  // ARM rejects a template in which a resource is built from a list() of its
+  // own resource ID: "Circular dependency detected on resource
+  // .../config/appsettings". Merging in the deployed settings therefore has to
+  // read in one template and write in another. Declaring the settings resource
+  // next to the lookup again would fail every deployment, and compiles
+  // cleanly, so only this guard catches it.
+  assert.match(template, /list\('\$\{deployedSite\.id\}\/config\/appsettings'/);
+  assert.ok(
+    !template.includes("Microsoft.Web/sites/config"),
+    "main.bicep must not declare the settings resource it also reads",
+  );
+  assert.ok(
+    !/list\('/.test(settingsModule),
+    "app-settings.bicep must not read the settings resource it writes",
+  );
+  // The merged settings carry connection strings and signing keys, and module
+  // parameters are recorded in the deployment history unless marked secure.
+  assert.match(settingsModule, /@secure\(\)\s+param settings object/);
+});
+
+test("the Web PubSub instance sets no network rules", async () => {
+  const template = await readFile(templatePath, "utf8");
+
+  // The Free tier rejects the property outright: "Free tier doesn't support
+  // setting network ACLs". It also does not need it, because the service
+  // applies allow-all defaults and leaves them alone on later deployments.
+  // what-if wrongly predicts their removal, so this guard exists to stop that
+  // prediction being "fixed" back into a failing deployment.
+  assert.ok(!template.includes("networkACLs:"));
 });
 
 test("re-running the template keeps settings it was not given", async () => {
