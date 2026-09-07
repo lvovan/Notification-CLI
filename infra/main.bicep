@@ -343,6 +343,32 @@ resource appService 'Microsoft.Web/sites@2024-11-01' = {
 }
 
 /*
+  Publishing credentials for the two Kudu endpoints.
+
+  Both are off. Publishing signs in with OpenID Connect and reaches the site
+  through Azure Resource Manager, so it needs neither. Leaving SCM basic
+  authentication on would be a standing password to the site that nothing uses,
+  and this subscription switches it off again regardless: profiles downloaded
+  afterwards carry the literal credential "REDACTED", which then fails as an
+  opaque 401 rather than as anything naming the cause.
+*/
+resource scmPublishingPolicy 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-11-01' = {
+  parent: appService
+  name: 'scm'
+  properties: {
+    allow: false
+  }
+}
+
+resource ftpPublishingPolicy 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-11-01' = {
+  parent: appService
+  name: 'ftp'
+  properties: {
+    allow: false
+  }
+}
+
+/*
   Private access to Table Storage.
 
   Some subscriptions run a governance policy that forces publicNetworkAccess to

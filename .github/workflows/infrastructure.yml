@@ -247,7 +247,7 @@ jobs:
             echo "- Analytics configured: \`$TELEMETRY_CONFIGURED\`"
             echo "- Managed identity object ID: \`$PRINCIPAL_ID\`"
             echo ""
-            echo "Set the AZURE_APP_SERVICE_NAME variable to \`$APP_NAME\` and store its publish profile as AZURE_APP_SERVICE_PUBLISH_PROFILE."
+            echo "Set the AZURE_APP_SERVICE_NAME variable to \`$APP_NAME\`, and give the deploy workflow a federated identity with the Website Contributor role on this site."
             echo ""
             echo "On a first deployment, add \`https://$APP_HOSTNAME/auth/callback\` as a redirect URI on the Entra application, and register the managed identity above as a federated credential if the tenant forbids client secrets."
           } >> "$GITHUB_STEP_SUMMARY"

@@ -141,6 +141,10 @@ jobs:
       - build-cli
       - build-cli-macos
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required to mint the OpenID Connect token that signs in to Azure.
+      id-token: write
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -167,49 +171,51 @@ jobs:
           pnpm package
           pnpm smoke:package
 
-      # The deploy action reports every disagreement between the site name and
-      # the profile as one opaque "publish profile is invalid", so the profile
-      # is checked here first, where the message can name the actual problem.
-      # Only the site name is ever printed; it is not a secret.
-      - name: Check the publish profile
+      # Publishing signs in with OpenID Connect rather than a publish profile.
+      # A profile is basic authentication over SCM, which this subscription
+      # keeps switched off: the site then issues profiles whose credentials are
+      # literally "REDACTED", and every upload fails as a bare 401. Federated
+      # sign-in needs no stored credential and is unaffected by that setting.
+      - name: Check the deployment identity
         env:
-          PROFILE: ${{ secrets.AZURE_APP_SERVICE_PUBLISH_PROFILE }}
           APP_NAME: ${{ vars.AZURE_APP_SERVICE_NAME }}
+          CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           if [ -z "$APP_NAME" ]; then
             echo "::error::AZURE_APP_SERVICE_NAME is empty. Set it to the App Service site name before deploying."
             exit 1
           fi
 
-          if [ -z "$PROFILE" ]; then
-            echo "::error::AZURE_APP_SERVICE_PUBLISH_PROFILE is empty."
-            exit 1
-          fi
+          for name in CLIENT_ID TENANT_ID SUBSCRIPTION_ID; do
+            eval "value=\$$name"
+            if [ -z "$value" ]; then
+              echo "::error::AZURE_$name is empty. Publishing signs in with OpenID Connect; see the README for the app registration it needs."
+              exit 1
+            fi
+          done
 
-          site=$(printf '%s' "$PROFILE" | tr '>' '\n' \
-            | grep -o 'msdeploySite="[^"]*"' | head -1 | cut -d'"' -f2)
-          if [ -z "$site" ]; then
-            echo "::error::The publish profile has no MSDeploy entry. Enable SCM basic authentication on the site, then download the profile again."
-            exit 1
-          fi
+          echo "Publishing to $APP_NAME."
 
-          # An empty password is what a profile downloaded while SCM basic
-          # authentication was disabled looks like.
-          if printf '%s' "$PROFILE" | grep -q 'userPWD=""'; then
-            echo "::error::The publish profile carries no credentials. Enable SCM basic authentication on the site, then download the profile again."
-            exit 1
-          fi
-
-          if [ "$site" != "$APP_NAME" ]; then
-            echo "::error::AZURE_APP_SERVICE_NAME is set to '$APP_NAME', but the publish profile belongs to '$site'. Set the variable to '$site', or store the profile of '$APP_NAME'."
-            exit 1
-          fi
-
-          echo "Publishing to $site."
+      - name: Sign in to Azure
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy App Service
+        id: publish
         uses: Azure/webapps-deploy@02a81bead70021f5284939794bcec79c271ab383 # v3.0.8
         with:
           app-name: ${{ vars.AZURE_APP_SERVICE_NAME }}
-          publish-profile: ${{ secrets.AZURE_APP_SERVICE_PUBLISH_PROFILE }}
           package: dist/server
+
+      - name: Explain a rejected publish
+        if: failure() && steps.publish.outcome == 'failure'
+        env:
+          APP_NAME: ${{ vars.AZURE_APP_SERVICE_NAME }}
+        run: |
+          echo "::error::Publishing to $APP_NAME was rejected. The deployment identity needs the Website Contributor role on the site, and its federated credential must name this repository and branch."
+          exit 1

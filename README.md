@@ -94,36 +94,42 @@ in-process in `apps/server/src/entra.ts` for exactly that reason.
    yet. Nothing can be published before this step: an unprovisioned site fails
    the deploy workflow with `Publish profile is invalid`.
 
-5. **Publish** by storing the site's publish profile as the secret
-   `AZURE_APP_SERVICE_PUBLISH_PROFILE`:
+5. **Publish** by giving the deploy workflow an identity to sign in with.
+   Publishing uses OpenID Connect rather than a publish profile, so no
+   credential is stored: a profile is basic authentication over SCM, which many
+   subscriptions keep switched off, and a profile downloaded while it is off
+   carries the literal credential `REDACTED` that fails as an opaque 401.
+
+   Create an app registration, let this repository's `main` branch federate to
+   it, and give it rights over the site alone:
 
    ```powershell
-   az webapp deployment list-publishing-profiles `
-     --name <site> --resource-group <site-without-wa>-rg --xml
+   $app = az ad app create --display-name notification-cli-github-deploy `
+     --sign-in-audience AzureADMyOrg --output json | ConvertFrom-Json
+   $sp = az ad sp create --id $app.appId --output json | ConvertFrom-Json
+
+   az ad app federated-credential create --id $app.id --parameters (@{
+     name = "github-main"
+     issuer = "https://token.actions.githubusercontent.com"
+     subject = "repo:<owner>/<repo>:ref:refs/heads/main"
+     audiences = @("api://AzureADTokenExchange")
+   } | ConvertTo-Json -Compress)
+
+   az role assignment create --assignee-object-id $sp.id `
+     --assignee-principal-type ServicePrincipal --role "Website Contributor" `
+     --scope (az webapp show --name <site> --resource-group <site-without-wa>-rg --query id --output tsv)
    ```
 
-   The profile is only issued while SCM basic authentication is enabled, which
-   Azure turns off by default on new sites. Turn it back on, or the command
-   returns nothing:
+   Then store `AZURE_CLIENT_ID` (the application ID), `AZURE_TENANT_ID` and
+   `AZURE_SUBSCRIPTION_ID` as repository secrets, and set the
+   `AZURE_APP_SERVICE_NAME` variable to the site name.
 
-   ```powershell
-   az resource update --resource-group <site-without-wa>-rg `
-     --namespace Microsoft.Web --resource-type basicPublishingCredentialsPolicies `
-     --name scm --parent sites/<site> --set properties.allow=true
-   ```
+   The `subject` must match the ref being deployed exactly; a mismatch is
+   rejected at sign-in, before the site is contacted at all. Deploying from
+   another branch needs its own federated credential.
 
-   `AZURE_APP_SERVICE_NAME` must equal the `msdeploySite` attribute inside that
-   XML, which is the site's own name without any domain suffix. The deploy
-   action reports every mismatch as `Publish profile is invalid for app-name
-   and slot-name provided`, so the workflow checks the profile first and names
-   the real problem.
-
-   Only **SCM** basic authentication is needed; FTP basic authentication can
-   stay off. Re-download the profile after enabling it, because one downloaded
-   while it was off carries an empty `userPWD`.
-
-   The deploy workflow fails loudly if either `AZURE_APP_SERVICE_NAME` or
-   `AZURE_APP_SERVICE_PUBLISH_PROFILE` is missing.
+   The deploy workflow fails loudly if any of those secrets or the site name
+   variable is missing.
 
 6. **Add a custom domain and certificate**, if you use one. The infrastructure
    template does not bind App Service hostnames. App Service issues a free
@@ -637,9 +643,8 @@ unset variable is simply not passed, and therefore cannot blank the value the
 site is already running with.
 
 After a successful `deploy`, the run summary reports the App Service hostname
-and the managed identity object ID. Download the site's publish profile and
-store it as the `AZURE_APP_SERVICE_PUBLISH_PROFILE` repository secret for the
-deploy workflow.
+and the managed identity object ID. Register the deploy workflow's federated
+identity as described in [Hosting](#hosting) so it can publish to the site.
 
 ### Run it with azd
 
@@ -1325,16 +1330,16 @@ path or an explicit allow in **System Settings → Privacy & Security**.
 ## Deploy
 
 Provision the infrastructure first, then set the repository variable
-`AZURE_APP_SERVICE_NAME` and the repository secret
-`AZURE_APP_SERVICE_PUBLISH_PROFILE`. The workflow in
+`AZURE_APP_SERVICE_NAME` and the repository secrets `AZURE_CLIENT_ID`,
+`AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID`. The workflow in
 `.github\workflows\deploy.yml` tests and builds the CLI installers, checks and
 packages the web application, and deploys `dist\server` to App Service. Unlike
 the infrastructure workflow it also runs on every push to `main`.
 
-The deploy workflow validates both deployment settings before it calls Azure. A
-missing site name, missing profile, empty profile password or profile for the
-wrong site fails the run with an explicit error instead of silently skipping the
-deployment.
+The deploy workflow validates every deployment setting before it calls Azure, so
+a missing site name or identity fails the run with an explicit error instead of
+silently skipping the deployment. Publishing signs in with OpenID Connect, so no
+publish profile or other long-lived credential is stored.
 
 ## Breaking migration for this release
 
@@ -1342,8 +1347,8 @@ This release retires the Static Web App and makes the App Service the only
 host. Upgrade an existing deployment in this order:
 
 1. Provision the App Service with the updated infrastructure workflow and
-   configure `AZURE_APP_SERVICE_NAME` plus
-   `AZURE_APP_SERVICE_PUBLISH_PROFILE` for deployment.
+   configure `AZURE_APP_SERVICE_NAME` plus the federated deployment identity
+   for deployment.
 2. Add your production hostname to the App Service manually, bind a managed
    certificate, and add the same origin to the Entra application's redirect
    URIs. The Bicep template no longer binds a custom domain for you.

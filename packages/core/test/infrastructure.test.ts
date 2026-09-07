@@ -26,6 +26,33 @@ const workflowPath = repoPath(".github", "workflows", "infrastructure.yml");
 const deployWorkflowPath = repoPath(".github", "workflows", "deploy.yml");
 const azdParametersPath = repoPath("infra", "main.parameters.json");
 
+test("publishing needs no standing credential on the site", async () => {
+  const template = await readFile(templatePath, "utf8");
+
+  // Basic authentication over SCM is a password to the site that nothing uses
+  // once publishing signs in with OpenID Connect, and this subscription
+  // switches it off regardless: profiles issued afterwards carry the literal
+  // credential "REDACTED" and fail as an opaque 401.
+  assert.match(template, /name: 'scm'\s*\n\s*properties: \{\s*\n\s*allow: false/);
+  assert.match(template, /name: 'ftp'\s*\n\s*properties: \{\s*\n\s*allow: false/);
+
+  const workflow = await readFile(deployWorkflowPath, "utf8");
+
+  // A stored publish profile is exactly the credential this replaces.
+  assert.ok(
+    !workflow.includes("publish-profile"),
+    "publishing must not fall back to a stored publish profile",
+  );
+  assert.ok(
+    !workflow.includes("AZURE_APP_SERVICE_PUBLISH_PROFILE"),
+    "the publish profile secret is retired and must not be read",
+  );
+
+  // Federated sign-in is silently impossible without the token permission.
+  assert.match(workflow, /id-token: write/);
+  assert.match(workflow, /uses: azure\/login@/);
+});
+
 test("a cross-tenant managed-identity request is refused rather than deployed", async () => {
   const template = await readFile(templatePath, "utf8");
 
