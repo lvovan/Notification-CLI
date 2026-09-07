@@ -193,8 +193,19 @@ function page(
   };
 }
 
-interface AuthorizeParameters {
-  client: OAuthClient;
+/**
+ * A client that registered against an earlier build of this server keeps
+ * presenting a registration the current one has never heard of, and clients
+ * cache registrations indefinitely, so this is a dead end until the human
+ * clears it. Saying only "not registered" leaves them nothing to act on.
+ */
+const UNKNOWN_CLIENT_PAGE =
+  "<h1>Unknown application</h1>" +
+  "<p>This server does not recognise the registration this application presented, so the request cannot be trusted.</p>" +
+  "<p>Applications register themselves the first time they connect, and the registration lives with the server. Rebuilding the server discards every registration, along with every token it had issued.</p>" +
+  "<p>Clear this server's saved credentials and connect again. In Visual Studio Code, run <strong>Authentication: Remove Dynamic Authentication Providers</strong> from the Command Palette.</p>";
+
+interface AuthorizeParameters {  client: OAuthClient;
   redirectUri: string;
   state: string | null;
   challenge: string;
@@ -224,11 +235,7 @@ async function validateAuthorize(
   if (!client) {
     return {
       ok: false,
-      response: page(
-        400,
-        "Unknown application",
-        "<h1>Unknown application</h1><p>This application is not registered, so the request cannot be trusted.</p>",
-      ),
+      response: page(400, "Unknown application", UNKNOWN_CLIENT_PAGE),
     };
   }
 

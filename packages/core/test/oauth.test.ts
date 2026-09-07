@@ -395,6 +395,20 @@ test("an unregistered client or redirect never reaches the client", async () => 
   );
 });
 
+test("an unknown registration says how to recover from it", async () => {
+  const store = new MemoryOAuthStore();
+  const response = await handleAuthorizeRequest(
+    request("GET", `/oauth/authorize?${authorizeQuery("stale-client", "x").toString()}`),
+    env,
+    store,
+  );
+
+  assert.equal(response.status, 400);
+  // Clients cache registrations forever, so the page is the only place the
+  // human can learn that clearing them is what unsticks this.
+  assert.match(String(response.body), /Remove Dynamic Authentication Providers/);
+});
+
 test("protocol errors are reported to the client with the state and issuer", async () => {
   const store = new MemoryOAuthStore();
   const clientId = await registerClient(store);

@@ -1206,6 +1206,23 @@ Tokens are ES256-signed and bound to the deployment that issued them: the
 all revalidated on every request, so a token minted by another instance is
 worthless here.
 
+#### "Unknown application" at the consent page
+
+Registrations are stored with the deployment, so rebuilding the storage
+account — a fresh provision, or a move to another subscription — discards every
+one of them, along with the signing key and every token already issued.
+
+Clients cache their registration against the server's address, which does not
+change, and [VS Code does not evict a registration the server has
+rejected](https://github.com/microsoft/vscode/issues/321834). So the client
+keeps presenting an identity this server has never heard of, and no amount of
+retrying helps.
+
+Clear the client's saved credentials. In VS Code that is **Authentication:
+Remove Dynamic Authentication Providers**, from the Command Palette; the next
+connection registers again. The consent page says as much, since it is the only
+place the failure is visible.
+
 ### API key (fallback)
 
 For clients that do not implement OAuth, send your personal API key in one of
