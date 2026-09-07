@@ -120,13 +120,31 @@ in-process in `apps/server/src/entra.ts` for exactly that reason.
      --scope (az webapp show --name <site> --resource-group <site-without-wa>-rg --query id --output tsv)
    ```
 
-   Then store `AZURE_CLIENT_ID` (the application ID), `AZURE_TENANT_ID` and
-   `AZURE_SUBSCRIPTION_ID` as repository secrets, and set the
-   `AZURE_APP_SERVICE_NAME` variable to the site name.
-
    The `subject` must match the ref being deployed exactly; a mismatch is
    rejected at sign-in, before the site is contacted at all. Deploying from
    another branch needs its own federated credential.
+
+   Some accounts present an **immutable** subject instead, naming the owner and
+   repository by numeric ID:
+
+   ```
+   repo:<owner>@<owner-id>/<repo>@<repo-id>:ref:refs/heads/main
+   ```
+
+   Nothing advertises which form you get, and the failure names the presented
+   subject, so read it out of the error and register that too:
+
+   ```
+   AADSTS700213: No matching federated identity record found for presented
+   assertion subject '...'
+   ```
+
+   Both forms can be registered on the same application, which is the simplest
+   way to be right either way.
+
+   Then store `AZURE_CLIENT_ID` (the application ID), `AZURE_TENANT_ID` and
+   `AZURE_SUBSCRIPTION_ID` as repository secrets, and set the
+   `AZURE_APP_SERVICE_NAME` variable to the site name.
 
    The deploy workflow fails loudly if any of those secrets or the site name
    variable is missing.
