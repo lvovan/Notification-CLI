@@ -25,7 +25,7 @@ on:
         type: boolean
         default: true
       resource_group:
-        description: "Resource group. Defaults to the site name with -wa replaced by -rg."
+        description: "Resource group. Defaults to the AZURE_RESOURCE_GROUP variable, then to the site name with -wa replaced by -rg."
         type: string
         default: ""
 
@@ -62,6 +62,7 @@ jobs:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RESOURCE_GROUP_INPUT: ${{ inputs.resource_group }}
+          RESOURCE_GROUP_VARIABLE: ${{ vars.AZURE_RESOURCE_GROUP }}
         run: |
           missing=""
           [ -n "$AZURE_CLIENT_ID" ] || missing="$missing AZURE_CLIENT_ID"
@@ -93,8 +94,10 @@ jobs:
           # Resource names must derive from the site name, because a name that
           # resolves to nothing silently builds a parallel stack. The resource
           # group is different: it only says where to look, so it is an input
-          # with a derived default rather than a rule.
-          echo "RESOURCE_GROUP=${RESOURCE_GROUP_INPUT:-$prefix-rg}" >> "$GITHUB_ENV"
+          # with a derived default rather than a rule. The repository variable
+          # sits between the two, so a group that does not follow the naming
+          # convention need not be retyped on every run.
+          echo "RESOURCE_GROUP=${RESOURCE_GROUP_INPUT:-${RESOURCE_GROUP_VARIABLE:-$prefix-rg}}" >> "$GITHUB_ENV"
 
       - name: Sign in to Azure
         uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
