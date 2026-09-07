@@ -26,6 +26,36 @@ const workflowPath = repoPath(".github", "workflows", "infrastructure.yml");
 const deployWorkflowPath = repoPath(".github", "workflows", "deploy.yml");
 const azdParametersPath = repoPath("infra", "main.parameters.json");
 
+test("a cross-tenant managed-identity request is refused rather than deployed", async () => {
+  const template = await readFile(templatePath, "utf8");
+
+  // Entra only accepts a federated assertion when the app registration shares a
+  // tenant with the identity presenting it, and a system-assigned identity is
+  // always in the subscription's tenant. Writing "true" across that boundary
+  // fails every sign-in with AADSTS70025, and the value survives redeployment,
+  // so the site cannot recover on its own.
+  assert.match(
+    template,
+    /var refuseManagedIdentity = requestedManagedIdentity && mergedSettings\.NOTIFICATION_CLI_ENTRA_TENANT_ID != subscription\(\)\.tenantId/,
+  );
+
+  // Judged on the merged settings, so a "true" an earlier deployment left on
+  // the site is disarmed even when this deployment supplies no value for it.
+  assert.match(
+    template,
+    /var requestedManagedIdentity = toLower\(mergedSettings\.NOTIFICATION_CLI_ENTRA_USE_MANAGED_IDENTITY\) == 'true'/,
+  );
+
+  // Refusing has to change what is written, not merely warn about it.
+  assert.match(
+    template,
+    /var effectiveSettings = refuseManagedIdentity\s*\?\s*union\(mergedSettings, \{ NOTIFICATION_CLI_ENTRA_USE_MANAGED_IDENTITY: 'false' \}\)\s*:\s*mergedSettings/,
+  );
+
+  // A silent refusal is its own trap: the deployment must report it.
+  assert.match(template, /output entraManagedIdentityRefused bool = refuseManagedIdentity/);
+});
+
 test("private storage access joins the site to a network that can reach the endpoint", async () => {
   const template = await readFile(templatePath, "utf8");
 
@@ -199,7 +229,7 @@ test("re-running the template keeps settings it was not given", async () => {
   // sign-in would break.
   assert.match(
     template,
-    /var effectiveSettings = union\(placeholderSettings, deployedSettings, derivedSettings, suppliedSettings\)/,
+    /var mergedSettings = union\(placeholderSettings, deployedSettings, derivedSettings, suppliedSettings\)/,
   );
   assert.match(template, /list\('\$\{deployedSite\.id\}\/config\/appsettings'/);
 

@@ -274,6 +274,22 @@ exposed API, no app roles, no Graph permissions.
    Where the site cannot be moved into the registration's tenant, the
    public-client flow above is the arrangement that works.
 
+   Because the setting survives every redeployment once written, the template
+   refuses it rather than trusting it: when `NOTIFICATION_CLI_ENTRA_TENANT_ID`
+   is not the subscription's own tenant, `true` is rewritten to `false` and the
+   deployment reports `entraManagedIdentityRefused`. It judges the merged
+   settings, so a `true` an earlier run left on the site is disarmed too. Read
+   it back after provisioning:
+
+   ```powershell
+   az deployment group show --resource-group <resource-group> --name <deployment> `
+     --query properties.outputs.entraManagedIdentityRefused.value
+   ```
+
+   Without that guard the failure is hard to place: sign-in redirects
+   correctly, the consent screen appears, and only the token exchange fails —
+   with `AADSTS70025`, naming the client rather than the setting that broke it.
+
    The site then reads a token for `api://AzureADTokenExchange` from the local
    identity endpoint and presents it as a `client_assertion` during the code
    exchange. A rejected assertion surfaces as a `502` quoting Entra ID's own
@@ -744,7 +760,8 @@ configure a manually created instance:
 | `NOTIFICATION_CLI_ENTRA_TENANT_ID` | Directory of the Entra application used to sign users in |
 | `NOTIFICATION_CLI_ENTRA_CLIENT_ID` | Application ID of that registration |
 | `NOTIFICATION_CLI_ENTRA_CLIENT_SECRET` | Client secret of that registration. Optional: unset means a managed-identity assertion, or no credential at all for a public client |
-| `NOTIFICATION_CLI_ENTRA_USE_MANAGED_IDENTITY` | `true` to prove the client with the site's managed identity, which needs a matching federated credential on the registration. Anything else signs in as a public client || `NOTIFICATION_CLI_SESSION_SECRET` | The HMAC key signing the sign-in cookie; generate 32 random bytes as shown in [Hosting](#hosting). Changing it signs every browser out |
+| `NOTIFICATION_CLI_ENTRA_USE_MANAGED_IDENTITY` | `true` to prove the client with the site's managed identity, which needs a matching federated credential on a registration in the same tenant. Anything else signs in as a public client, and the template refuses `true` across tenants |
+| `NOTIFICATION_CLI_SESSION_SECRET` | The HMAC key signing the sign-in cookie; generate 32 random bytes as shown in [Hosting](#hosting). Changing it signs every browser out |
 | `NOTIFICATION_CLI_CLARITY_PROJECT_ID` | Optional. Microsoft Clarity project ID. Unset means no analytics tag is loaded and no third-party origin is allowed. See [Usage analytics](#usage-analytics) |
 | `NOTIFICATION_CLI_WEB_ROOT` | Optional path to the frontend files. Defaults to `web` next to the bundle |
 

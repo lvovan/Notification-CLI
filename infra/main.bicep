@@ -91,7 +91,7 @@ param privateStorageAccess bool = false
 @description('Microsoft Clarity project ID. Leave empty to keep the deployed value; unset entirely means no analytics tag is loaded.')
 param clarityProjectId string = ''
 
-@description('Set to "true" only once a federated identity credential naming appServicePrincipalId exists on the app registration, and its tenant allows that issuer. Anything else signs in as a public client, which needs no credential. Leave empty to keep the deployed value.')
+@description('Set to "true" only when the Entra application lives in this subscription\'s tenant and carries a federated identity credential naming appServicePrincipalId. A cross-tenant request is refused, because it would fail every sign-in with AADSTS70025. Anything else signs in as a public client, which needs no credential. Leave empty to keep the deployed value.')
 @allowed([
   ''
   'true'
@@ -226,7 +226,7 @@ var placeholderSettings = {
   NOTIFICATION_CLI_VAPID_PRIVATE_KEY: '${placeholderPrefix} VAPID private key from the same generated pair; never share it'
   NOTIFICATION_CLI_VAPID_SUBJECT: '${placeholderPrefix} VAPID contact URI, normally "mailto:you@example.com"'
   NOTIFICATION_CLI_CLARITY_PROJECT_ID: '${placeholderPrefix} Microsoft Clarity project ID, or delete this setting to load no analytics tag'
-  NOTIFICATION_CLI_ENTRA_USE_MANAGED_IDENTITY: '${placeholderPrefix} set to "true" only after adding a federated identity credential for appServicePrincipalId to the app registration; anything else signs in as a public client, which needs no credential'
+  NOTIFICATION_CLI_ENTRA_USE_MANAGED_IDENTITY: '${placeholderPrefix} set to "true" only when the app registration is in this subscription\'s tenant and carries a federated identity credential for appServicePrincipalId; across tenants it is refused, and anything else signs in as a public client, which needs no credential'
 }
 
 /*
@@ -253,7 +253,28 @@ var suppliedSettings = union(
   derived connection strings override everything. Placeholders come first and
   therefore lose to any real value, including one set by hand on the site.
 */
-var effectiveSettings = union(placeholderSettings, deployedSettings, derivedSettings, suppliedSettings)
+var mergedSettings = union(placeholderSettings, deployedSettings, derivedSettings, suppliedSettings)
+
+/*
+  A federated identity credential is only accepted when the app registration
+  lives in the same tenant as the identity presenting the assertion, and a
+  system-assigned identity always lives in the subscription's tenant. Asking for
+  managed-identity sign-in across a tenant boundary therefore cannot work: every
+  sign-in fails the token exchange with AADSTS70025, and nothing in the running
+  site can recover from it.
+
+  The request is refused here rather than written to the site, because the value
+  survives redeployment once it is set. Judging the merged settings rather than
+  the parameter also disarms a "true" that an earlier deployment already left
+  behind. entraManagedIdentityRefused reports it so the refusal is not silent.
+*/
+var requestedManagedIdentity = toLower(mergedSettings.NOTIFICATION_CLI_ENTRA_USE_MANAGED_IDENTITY) == 'true'
+
+var refuseManagedIdentity = requestedManagedIdentity && mergedSettings.NOTIFICATION_CLI_ENTRA_TENANT_ID != subscription().tenantId
+
+var effectiveSettings = refuseManagedIdentity
+  ? union(mergedSettings, { NOTIFICATION_CLI_ENTRA_USE_MANAGED_IDENTITY: 'false' })
+  : mergedSettings
 
 /*
   The App Service host.
@@ -531,9 +552,11 @@ output staleSettings array = filter(
   key => contains(deployedSettings, key)
 )
 
+@description('Whether a request for managed-identity sign-in was refused because the Entra application is in a different tenant from the site identity. When true, the site was configured to sign in as a public client instead, which is the only mode that can work across a tenant boundary.')
+output entraManagedIdentityRefused bool = refuseManagedIdentity
+
 @description('Whether Web Push is configured. When false, notifications only reach open browser tabs.')
 output pushConfigured bool = !startsWith(effectiveSettings.NOTIFICATION_CLI_VAPID_PUBLIC_KEY, placeholderPrefix)
-
 @description('Whether browser analytics are configured. When false, no third-party tag is loaded.')
 output telemetryConfigured bool = !startsWith(effectiveSettings.NOTIFICATION_CLI_CLARITY_PROJECT_ID, placeholderPrefix)
 
