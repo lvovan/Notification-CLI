@@ -26,6 +26,31 @@ const workflowPath = repoPath(".github", "workflows", "infrastructure.yml");
 const deployWorkflowPath = repoPath(".github", "workflows", "deploy.yml");
 const azdParametersPath = repoPath("infra", "main.parameters.json");
 
+test("provisioning leaves the site publishable and keeps its private path to storage", async () => {
+  const workflow = await readFile(workflowPath, "utf8");
+
+  // Publishing needs a role assignment and a federated credential, neither of
+  // which Bicep can create. Doing it here is what makes a freshly provisioned
+  // stack deployable without a manual step.
+  assert.match(workflow, /--role "Website Contributor"/);
+  assert.match(workflow, /az ad app federated-credential create/);
+
+  // Both subject forms, because nothing says in advance which one GitHub
+  // presents and a mismatch is rejected at sign-in with AADSTS700213.
+  assert.match(workflow, /repo:\$REPOSITORY:\$ref/);
+  assert.match(workflow, /repo:\$OWNER@\$OWNER_ID\/\$repo_name@\$REPOSITORY_ID:\$ref/);
+
+  // Re-running must not fail on work already done.
+  assert.match(workflow, /az role assignment list/);
+  assert.match(workflow, /federated-credential list/);
+
+  // Structural parameters are not read back off the site, so one left unset
+  // silently reverts to the template default. Omitting this one would delete
+  // the private endpoint the site reaches storage through.
+  assert.match(workflow, /--argjson privateStorageAccess "\$PRIVATE_STORAGE_ACCESS"/);
+  assert.match(workflow, /privateStorageAccess: \{value: \$privateStorageAccess\}/);
+});
+
 test("publishing needs no standing credential on the site", async () => {
   const template = await readFile(templatePath, "utf8");
 

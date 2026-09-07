@@ -20,6 +20,10 @@ on:
         description: "Tick only when the App Service site does not exist yet."
         type: boolean
         default: false
+      authorize_deploy:
+        description: "Give the deploy workflow's identity what it needs to publish to the site."
+        type: boolean
+        default: true
       resource_group:
         description: "Resource group. Defaults to the site name with -wa replaced by -rg."
         type: string
@@ -114,9 +118,16 @@ jobs:
       # no credentials at all. Only genuinely absent values are generated here,
       # which is what makes a first deployment self-contained without making
       # every later run a chance to overwrite a working configuration.
+      #
+      # Structural parameters are the exception: unlike settings, they are not
+      # read back off the site, so one left unset reverts to the template
+      # default. privateStorageAccess is passed on every run for that reason —
+      # omitting it would quietly delete the private endpoint the site reaches
+      # storage through, and every request would start failing.
       - name: Build deployment parameters
         env:
           RETENTION_DAYS: ${{ vars.NOTIFICATION_CLI_RETENTION_DAYS || '7' }}
+          PRIVATE_STORAGE_ACCESS: ${{ vars.NOTIFICATION_CLI_PRIVATE_STORAGE_ACCESS || 'false' }}
           CLARITY_PROJECT_ID: ${{ vars.CLARITY_PROJECT_ID }}
           ENTRA_TENANT_ID: ${{ vars.ENTRA_TENANT_ID }}
           ENTRA_CLIENT_ID: ${{ vars.ENTRA_CLIENT_ID }}
@@ -153,10 +164,12 @@ jobs:
             --arg location "${{ inputs.location }}" \
             --argjson siteExists "$SITE_EXISTS" \
             --argjson retentionDays "$RETENTION_DAYS" \
+            --argjson privateStorageAccess "$PRIVATE_STORAGE_ACCESS" \
             '{namePrefix: {value: $prefix},
               location: {value: $location},
               siteExists: {value: $siteExists},
-              retentionDays: {value: $retentionDays}}')
+              retentionDays: {value: $retentionDays},
+              privateStorageAccess: {value: $privateStorageAccess}}')
 
           add() {
             # The value goes through the environment rather than an argument,
@@ -229,6 +242,98 @@ jobs:
           echo "app_name=$(echo "$outputs" | jq -r .appServiceName.value)" >> "$GITHUB_OUTPUT"
           echo "app_hostname=$(echo "$outputs" | jq -r .appServiceHostname.value)" >> "$GITHUB_OUTPUT"
           echo "principal_id=$(echo "$outputs" | jq -r .appServicePrincipalId.value)" >> "$GITHUB_OUTPUT"
+          echo "managed_identity_refused=$(echo "$outputs" | jq -r .entraManagedIdentityRefused.value)" >> "$GITHUB_OUTPUT"
+          echo "stale_settings=$(echo "$outputs" | jq -c '.staleSettings.value // []')" >> "$GITHUB_OUTPUT"
+
+      # Publishing signs in with OpenID Connect and reaches the site through
+      # Azure Resource Manager, so the deploy workflow needs two things that
+      # provisioning cannot create in Bicep: a federated credential Entra will
+      # accept, and a role assignment on the site. Both are done here so a
+      # freshly provisioned stack is publishable without a manual step.
+      #
+      # This is the same identity that just provisioned, so it is granted only
+      # the narrow role that publishing itself requires; the broader rights it
+      # used above come from the resource group.
+      - name: Authorize the deploy workflow
+        if: inputs.mode == 'deploy' && inputs.authorize_deploy
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          APP_NAME: ${{ steps.deploy.outputs.app_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REPOSITORY: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          OWNER_ID: ${{ github.repository_owner_id }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+        run: |
+          set -euo pipefail
+
+          site_id=$(az webapp show \
+            --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
+            --query id --output tsv)
+
+          sp_id=$(az ad sp show --id "$AZURE_CLIENT_ID" --query id --output tsv)
+
+          # Re-running must not fail, and az errors on a duplicate assignment.
+          existing=$(az role assignment list \
+            --assignee "$sp_id" --scope "$site_id" \
+            --query "[?roleDefinitionName=='Website Contributor'] | length(@)" \
+            --output tsv)
+          if [ "$existing" = "0" ]; then
+            az role assignment create \
+              --assignee-object-id "$sp_id" \
+              --assignee-principal-type ServicePrincipal \
+              --role "Website Contributor" \
+              --scope "$site_id" \
+              --output none
+            echo "Granted Website Contributor on $APP_NAME."
+          else
+            echo "Website Contributor on $APP_NAME is already granted."
+          fi
+
+          # GitHub presents one of two subject forms and nothing says which in
+          # advance: the plain one, or an immutable one naming the owner and
+          # repository by numeric ID. A credential that does not match is
+          # rejected at sign-in with AADSTS700213, before Azure is reached at
+          # all, so both are registered.
+          ref="ref:refs/heads/$DEFAULT_BRANCH"
+          repo_name="${REPOSITORY#*/}"
+          subjects=$(printf '%s\n%s\n' \
+            "repo:$REPOSITORY:$ref" \
+            "repo:$OWNER@$OWNER_ID/$repo_name@$REPOSITORY_ID:$ref")
+
+          app_object_id=$(az ad app list \
+            --filter "appId eq '$AZURE_CLIENT_ID'" --query "[0].id" --output tsv)
+          if [ -z "$app_object_id" ] || [ "$app_object_id" = "null" ]; then
+            echo "::warning::Cannot read the app registration for $AZURE_CLIENT_ID, so its federated credentials were left alone. Register them by hand; see README, Hosting."
+            exit 0
+          fi
+
+          registered=$(az ad app federated-credential list \
+            --id "$app_object_id" --query "[].subject" --output json)
+
+          index=0
+          echo "$subjects" | while read -r subject; do
+            index=$((index + 1))
+            if echo "$registered" | jq -e --arg s "$subject" 'index($s)' > /dev/null; then
+              echo "Federated credential already present for $subject."
+              continue
+            fi
+            body=$(jq -n --arg s "$subject" --arg n "github-$DEFAULT_BRANCH-$index" \
+              '{name: $n,
+                issuer: "https://token.actions.githubusercontent.com",
+                subject: $s,
+                audiences: ["api://AzureADTokenExchange"]}')
+            file="$RUNNER_TEMP/fic-$index.json"
+            install -m 600 /dev/null "$file"
+            printf '%s' "$body" > "$file"
+            if az ad app federated-credential create \
+                 --id "$app_object_id" --parameters "@$file" --output none 2>/dev/null; then
+              echo "Registered federated credential for $subject."
+            else
+              echo "::warning::Could not register a federated credential for $subject. The deploy workflow will fail with AADSTS700213 until it exists."
+            fi
+            rm -f "$file"
+          done
 
       - name: Summarize deployment
         if: inputs.mode == 'deploy'
@@ -238,6 +343,9 @@ jobs:
           APP_NAME: ${{ steps.deploy.outputs.app_name }}
           APP_HOSTNAME: ${{ steps.deploy.outputs.app_hostname }}
           PRINCIPAL_ID: ${{ steps.deploy.outputs.principal_id }}
+          MANAGED_IDENTITY_REFUSED: ${{ steps.deploy.outputs.managed_identity_refused }}
+          STALE_SETTINGS: ${{ steps.deploy.outputs.stale_settings }}
+          AUTHORIZED: ${{ inputs.authorize_deploy }}
         run: |
           {
             echo "## Infrastructure deployed"
@@ -247,7 +355,25 @@ jobs:
             echo "- Analytics configured: \`$TELEMETRY_CONFIGURED\`"
             echo "- Managed identity object ID: \`$PRINCIPAL_ID\`"
             echo ""
-            echo "Set the AZURE_APP_SERVICE_NAME variable to \`$APP_NAME\`, and give the deploy workflow a federated identity with the Website Contributor role on this site."
+
+            if [ "$AUTHORIZED" = "true" ]; then
+              echo "The deploy workflow is authorized to publish to this site. Set the AZURE_APP_SERVICE_NAME variable to \`$APP_NAME\` if it is not already."
+            else
+              echo "Set the AZURE_APP_SERVICE_NAME variable to \`$APP_NAME\`, then re-run with \`authorize_deploy\` ticked so the deploy workflow can publish to it."
+            fi
             echo ""
-            echo "On a first deployment, add \`https://$APP_HOSTNAME/auth/callback\` as a redirect URI on the Entra application, and register the managed identity above as a federated credential if the tenant forbids client secrets."
+
+            if [ "$MANAGED_IDENTITY_REFUSED" = "true" ]; then
+              echo "> [!WARNING]"
+              echo "> Managed-identity sign-in was requested but refused, because the Entra application is in a different tenant from the site identity. Entra would reject every sign-in with AADSTS70025, so the site was configured as a public client instead. Clear NOTIFICATION_CLI_ENTRA_USE_MANAGED_IDENTITY to stop asking."
+              echo ""
+            fi
+
+            if [ -n "$STALE_SETTINGS" ] && [ "$STALE_SETTINGS" != "[]" ]; then
+              echo "> [!NOTE]"
+              echo "> Retired settings are still on the site and must be deleted by hand: \`$STALE_SETTINGS\`."
+              echo ""
+            fi
+
+            echo "On a first deployment, add \`https://$APP_HOSTNAME/auth/callback\` as a redirect URI on the Entra application."
           } >> "$GITHUB_STEP_SUMMARY"
