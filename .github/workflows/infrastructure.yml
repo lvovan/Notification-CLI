@@ -274,7 +274,10 @@ jobs:
             --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
             --query id --output tsv)
 
-          sp_id=$(az ad sp show --id "$AZURE_CLIENT_ID" --query id --output tsv)
+          if ! sp_id=$(az ad sp show --id "$AZURE_CLIENT_ID" --query id --output tsv 2>/dev/null); then
+            echo "::error::Cannot resolve the service principal for this identity, so publishing cannot be authorized. Grant it directory read access, or assign Website Contributor on $APP_NAME by hand."
+            exit 1
+          fi
 
           # Re-running must not fail, and az errors on a duplicate assignment.
           existing=$(az role assignment list \
@@ -304,15 +307,20 @@ jobs:
             "repo:$REPOSITORY:$ref" \
             "repo:$OWNER@$OWNER_ID/$repo_name@$REPOSITORY_ID:$ref")
 
+          # Reading the app registration needs Microsoft Graph permission the
+          # deploying identity may simply not have, and az fails rather than
+          # returning nothing. Federated credentials are a one-time bootstrap,
+          # so this warns and moves on instead of failing a good deployment.
           app_object_id=$(az ad app list \
-            --filter "appId eq '$AZURE_CLIENT_ID'" --query "[0].id" --output tsv)
+            --filter "appId eq '$AZURE_CLIENT_ID'" --query "[0].id" --output tsv 2>/dev/null) || true
           if [ -z "$app_object_id" ] || [ "$app_object_id" = "null" ]; then
-            echo "::warning::Cannot read the app registration for $AZURE_CLIENT_ID, so its federated credentials were left alone. Register them by hand; see README, Hosting."
+            echo "::warning::Cannot read the app registration for this identity, so its federated credentials were left alone. Register them by hand; see README, Hosting. The subjects needed are:"
+            echo "$subjects" | while read -r subject; do echo "::warning::  $subject"; done
             exit 0
           fi
 
           registered=$(az ad app federated-credential list \
-            --id "$app_object_id" --query "[].subject" --output json)
+            --id "$app_object_id" --query "[].subject" --output json 2>/dev/null) || registered='[]'
 
           index=0
           echo "$subjects" | while read -r subject; do

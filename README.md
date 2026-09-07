@@ -632,9 +632,33 @@ browser tabs.
 The trade-off is that a setting the template no longer knows about is kept
 rather than removed. Delete retired settings from the site by hand.
 
+Structural parameters behave differently from settings, because nothing reads
+them back off the site: one left unset silently reverts to the template
+default. `privateStorageAccess` is therefore passed on every run from the
+`NOTIFICATION_CLI_PRIVATE_STORAGE_ACCESS` variable — leaving it unset once
+would delete the private endpoint the site reaches storage through and take the
+application down.
+
+After deploying, the workflow leaves the site publishable: it grants the deploy
+identity **Website Contributor** on the site and registers the federated
+credentials that identity signs in with. Untick `authorize_deploy` to skip it.
+
 The workflow signs in with OpenID Connect, so no publishing profile or Azure
 client secret is stored for provisioning. Register a federated credential on an
-app registration with the Contributor role over the resource group, then set:
+app registration and give it these roles over the resource group:
+
+| Role | Why |
+| --- | --- |
+| `Contributor` | Creates and updates the resources themselves |
+| `User Access Administrator` | The template assigns the site's managed identity its roles on Storage and Web PubSub, and Contributor cannot write role assignments |
+
+Managing the federated credentials also needs the Microsoft Graph application
+permission `Application.ReadWrite.OwnedBy`, with the identity added as an owner
+of its own registration. That grant needs a directory administrator, so it is
+optional: without it the run warns, prints the exact subjects to register, and
+carries on rather than failing a good deployment.
+
+Then set:
 
 | Repository secret | Purpose |
 | --- | --- |
@@ -649,6 +673,8 @@ authentication error that names the wrong cause.
 | Repository variable | Purpose |
 | --- | --- |
 | `AZURE_APP_SERVICE_NAME` | **Required.** Site name, ending in `-wa`. Every other resource name derives from it |
+| `AZURE_RESOURCE_GROUP` | Resource group. Defaults to the site name with `-wa` replaced by `-rg`, so set it when the group does not follow that convention |
+| `NOTIFICATION_CLI_PRIVATE_STORAGE_ACCESS` | `true` to reach Table Storage over a private endpoint. Must stay set, or the next run removes it |
 | `ENTRA_TENANT_ID` | Tenant value for browser sign-in, such as `common` or a tenant GUID |
 | `ENTRA_CLIENT_ID` | Application (client) ID of the browser sign-in registration |
 | `VAPID_SUBJECT` | Contact URI such as `mailto:you@example.com`. Enables Web Push on a first deployment |
@@ -660,9 +686,9 @@ the next `deploy`. Leaving one unset is not the same as setting it empty: an
 unset variable is simply not passed, and therefore cannot blank the value the
 site is already running with.
 
-After a successful `deploy`, the run summary reports the App Service hostname
-and the managed identity object ID. Register the deploy workflow's federated
-identity as described in [Hosting](#hosting) so it can publish to the site.
+After a successful `deploy`, the run summary reports the App Service hostname,
+the managed identity object ID, whether the deploy workflow was authorized, and
+any retired settings still on the site.
 
 ### Run it with azd
 
